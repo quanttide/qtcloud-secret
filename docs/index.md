@@ -1,6 +1,6 @@
 # 客户端设计思路（studio）
 
-> 本文档说明量潮密码云客户端（`src/studio`，Flutter）的设计思路。
+> 本文档说明量潮机密云客户端（`src/studio`，Flutter）的设计思路。
 > 服务端设计见 `src/provider/docs/index.md`，架构总纲见 `docs/dev-guide/`。
 
 ## 1. 定位与职责

@@ -18,7 +18,6 @@ class UnlockPage extends StatefulWidget {
 
 class _UnlockPageState extends State<UnlockPage> {
   final _formKey = GlobalKey<FormState>();
-  final _providerUrl = TextEditingController(text: AppConfig.providerBaseUrl);
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _masterPassword = TextEditingController();
@@ -28,7 +27,6 @@ class _UnlockPageState extends State<UnlockPage> {
 
   @override
   void dispose() {
-    _providerUrl.dispose();
     _username.dispose();
     _password.dispose();
     _masterPassword.dispose();
@@ -46,7 +44,6 @@ class _UnlockPageState extends State<UnlockPage> {
     });
     try {
       await widget.state.unlock(
-        providerBaseUrl: _providerUrl.text.trim(),
         username: _username.text.trim(),
         password: _password.text,
         masterPassword: _masterPassword.text,
@@ -84,14 +81,6 @@ class _UnlockPageState extends State<UnlockPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Icon(Icons.lock_outline, size: 56),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _providerUrl,
-                    decoration: const InputDecoration(
-                      labelText: '密码云服务地址（provider）',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _username,
