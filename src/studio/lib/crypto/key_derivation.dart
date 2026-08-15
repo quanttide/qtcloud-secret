@@ -6,10 +6,16 @@
 // - 恢复码作为 Argon2 secret 参与派生：即使主密码被键盘记录器窃取，
 //   攻击者仍缺恢复码无法派生密钥；用户忘记主密码时凭恢复码恢复
 // - 高成本参数（迭代/内存）是抗暴力破解的关键
+//
+// 实现：argon2_web（纯 Dart，Web-safe）——全平台统一，避免 ffi 在 Web
+// 不可用与 dart2js 64 位字面量问题；已与 argon2 1.0.1（ffi）逐字节
+// 对比一致（含 secret），桌面/Web 数据互通。派生结果是数据兼容性契约，
+// 参数与算法变更须先验证旧数据可解密（见 test/crypto_test.dart 固定向量）。
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:argon2/argon2.dart';
+import 'package:argon2_web/argon2_web.dart';
 
 class KeyDerivation {
   const KeyDerivation();
@@ -31,19 +37,24 @@ class KeyDerivation {
     Uint8List salt,
   ) {
     final parameters = Argon2Parameters(
-      Argon2Parameters.ARGON2_id,
+      Argon2Parameters.argon2id,
       salt,
+      desiredKeyLength: keyLength,
       secret: Uint8List.fromList(recoveryCode.codeUnits),
       iterations: iterations,
       memoryPowerOf2: memoryPowerOf2,
       lanes: parallelism,
-      version: Argon2Parameters.ARGON2_VERSION_13,
+      version: Argon2Parameters.version13,
     );
     final generator = Argon2BytesGenerator();
     generator.init(parameters);
-    final passwordBytes = parameters.converter.convert(masterPassword);
     final out = Uint8List(keyLength);
-    generator.generateBytes(passwordBytes, out);
+    // 主密码 UTF-8 编码（与 argon2 1.0.1 默认 converter 一致，中文密码兼容）；
+    // 恢复码作为 secret 原始字节传入（与旧实现一致，ASCII 集内 codeUnits==UTF-8）。
+    generator.generateBytes(
+      Uint8List.fromList(utf8.encode(masterPassword)),
+      out,
+    );
     return out;
   }
 

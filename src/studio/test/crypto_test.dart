@@ -1,5 +1,6 @@
 // crypto 层单元测试：派生、加解密往返、篡改检测、Emergency Kit。
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -38,6 +39,23 @@ void main() {
       final k1 = derivation.deriveKey(master, recovery, salt);
       final k2 = derivation.deriveKey(master, 'WRONG-CODE', salt);
       expect(k1, isNot(k2));
+    });
+
+    test('派生结果与固定向量一致（数据兼容性契约）', () {
+      // 该向量由 argon2 1.0.1（ffi）与 argon2_web 0.3.0 双实现逐字节
+      // 对比一致后固化：任何参数/算法变更不得改变派生结果，
+      // 否则既有密文将无法解密（零知识下无法迁移）。
+      // 输入：master='correct-horse-battery-staple'（UTF-8），
+      //       recovery='ABCDE-FGHJK-LMNPQ-RSTUV'（secret 原始字节），
+      //       salt=[i*7+3 for i in 0..15]
+      final salt = Uint8List.fromList(
+        List<int>.generate(16, (i) => i * 7 + 3),
+      );
+      final key = derivation.deriveKey(master, recovery, salt);
+      expect(
+        base64Encode(key),
+        'Vg/Dy9lZcfsJgCc5WzH0QlMd75kvG9lIAiGonKcU2H8=',
+      );
     });
   });
 
