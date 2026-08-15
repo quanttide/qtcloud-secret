@@ -10,16 +10,20 @@ import '../auth/session.dart';
 import '../store/local_cache.dart';
 import '../store/sync.dart';
 
-/// 编译期服务地址（dart-define 可覆盖）。
+/// 编译期服务地址（dart-define 注入）：
+///   flutter run --dart-define=PROVIDER_BASE_URL=https://...
+///
+/// 安全原则：认证服务（qtcloud-auth）地址不硬编码、不暴露——
+/// 客户端只配置本产品服务端地址；认证端点由 provider 引导（见 docs/index.md
+/// 「认证」演进：provider 提供 /auth-config 发现端点后，此处仅保留 PROVIDER_BASE_URL）。
 class AppConfig {
   static const providerBaseUrl = String.fromEnvironment(
     'PROVIDER_BASE_URL',
     defaultValue: 'https://qtcloudret-prod-lsqtuthybh.cn-hangzhou.fcapp.run',
   );
-  static const authBaseUrl = String.fromEnvironment(
-    'AUTH_BASE_URL',
-    defaultValue: 'https://qtclouduth-prod-gnuguyxinh.cn-hangzhou.fcapp.run',
-  );
+
+  /// 认证服务地址：仅 dart-define 注入（默认空，不硬编码内部服务地址）。
+  static const authBaseUrl = String.fromEnvironment('AUTH_BASE_URL');
 }
 
 /// 会话状态：锁定（未解锁）时不含任何密钥材料。
@@ -40,13 +44,18 @@ class AppState extends ChangeNotifier {
 
   /// 解锁：登录获取 JWT → 组装客户端 → 全量同步。
   Future<void> unlock({
-    required String authBaseUrl,
     required String providerBaseUrl,
     required String username,
     required String password,
     required String masterPassword,
     required String recoveryCode,
   }) async {
+    final authBaseUrl = AppConfig.authBaseUrl;
+    if (authBaseUrl.isEmpty) {
+      throw StateError(
+        '未配置认证服务地址：请通过 --dart-define=AUTH_BASE_URL=... 注入',
+      );
+    }
     final auth = AuthClient(baseUrl: authBaseUrl);
     final token = await auth.login(username: username, password: password);
     _masterPassword = masterPassword;

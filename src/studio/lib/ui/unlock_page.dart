@@ -18,7 +18,6 @@ class UnlockPage extends StatefulWidget {
 
 class _UnlockPageState extends State<UnlockPage> {
   final _formKey = GlobalKey<FormState>();
-  final _authUrl = TextEditingController(text: AppConfig.authBaseUrl);
   final _providerUrl = TextEditingController(text: AppConfig.providerBaseUrl);
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -29,7 +28,6 @@ class _UnlockPageState extends State<UnlockPage> {
 
   @override
   void dispose() {
-    _authUrl.dispose();
     _providerUrl.dispose();
     _username.dispose();
     _password.dispose();
@@ -48,7 +46,6 @@ class _UnlockPageState extends State<UnlockPage> {
     });
     try {
       await widget.state.unlock(
-        authBaseUrl: _authUrl.text.trim(),
         providerBaseUrl: _providerUrl.text.trim(),
         username: _username.text.trim(),
         password: _password.text,
@@ -88,14 +85,6 @@ class _UnlockPageState extends State<UnlockPage> {
                 children: [
                   const Icon(Icons.lock_outline, size: 56),
                   const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _authUrl,
-                    decoration: const InputDecoration(
-                      labelText: '认证服务地址（qtcloud-auth）',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
                   TextFormField(
                     controller: _providerUrl,
                     decoration: const InputDecoration(
