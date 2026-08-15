@@ -102,7 +102,7 @@ lib/
 
 认证：`Authorization: Bearer <JWT>`（qtcloud-auth 签发，HS256 共享 JWT_SECRET，见 provider docs）。
 
-**服务地址配置（安全原则）**：客户端只配置本产品服务地址（`--dart-define=PROVIDER_BASE_URL`，默认指向已部署环境）；**认证服务（qtcloud-auth）地址不硬编码、不暴露**——通过 `--dart-define=AUTH_BASE_URL` 构建时注入。演进：provider 增加 `GET /auth-config` 发现端点后，客户端仅需配置 provider 地址，认证端点由服务端引导（对齐"用户在外部子系统，对客户端透明"的架构）。
+**服务地址配置（安全原则）**：所有服务端地址均为部署配置，编译期注入（`--dart-define=PROVIDER_BASE_URL` / `AUTH_BASE_URL`），**UI 不提供任何地址编辑入口、不暴露内部服务地址**——单团队部署下地址固定，改环境即重新构建。演进：provider 增加 `GET /auth-config` 发现端点后，客户端仅需配置 provider 地址，认证端点由服务端引导（对齐"用户在外部子系统，对客户端透明"的架构）。
 
 ## 7. 演进预留
 
