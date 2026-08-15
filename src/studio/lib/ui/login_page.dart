@@ -1,37 +1,36 @@
-// 解锁页：主密码 + 恢复码（本地密钥派生，验证「你有没有密钥」）。
+// 登录页：qtcloud-auth 账号密码认证（验证「你是谁」）。
 //
-// 与登录页分离（docs/index.md 4.2）：登录（账号密码）只获取会话，
-// 本页只负责零知识解锁——派生密钥并全量同步；
-// 密钥材料只存在于 AppState 内存，锁定即清除。
+// 与解锁页分离（docs/index.md 4.2）：登录只获取会话（JWT），
+// 不接触任何密钥材料；主密码/恢复码属于本地解锁，不在本页出现。
 // 服务端地址为编译期配置，UI 不暴露任何地址入口。
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 
-class UnlockPage extends StatefulWidget {
-  const UnlockPage({super.key, required this.state});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key, required this.state});
 
   final AppState state;
 
   @override
-  State<UnlockPage> createState() => _UnlockPageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _UnlockPageState extends State<UnlockPage> {
+class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _masterPassword = TextEditingController();
-  final _recoveryCode = TextEditingController();
+  final _username = TextEditingController();
+  final _password = TextEditingController();
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
-    _masterPassword.dispose();
-    _recoveryCode.dispose();
+    _username.dispose();
+    _password.dispose();
     super.dispose();
   }
 
-  Future<void> _unlock() async {
+  Future<void> _login() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -40,11 +39,11 @@ class _UnlockPageState extends State<UnlockPage> {
       _error = null;
     });
     try {
-      await widget.state.unlock(
-        masterPassword: _masterPassword.text,
-        recoveryCode: _recoveryCode.text.trim(),
+      await widget.state.login(
+        username: _username.text.trim(),
+        password: _password.text,
       );
-      // 解锁成功后由 SecretApp（状态驱动）切换到条目列表页。
+      // 登录成功后由 SecretApp（状态驱动）切换到解锁页。
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -57,7 +56,7 @@ class _UnlockPageState extends State<UnlockPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('解锁保险库')),
+      appBar: AppBar(title: const Text('量潮密码云')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -69,27 +68,27 @@ class _UnlockPageState extends State<UnlockPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.key_outlined, size: 56),
+                  const Icon(Icons.lock_outline, size: 56),
                   const SizedBox(height: 16),
                   TextFormField(
-                    controller: _masterPassword,
-                    obscureText: true,
+                    controller: _username,
                     decoration: const InputDecoration(
-                      labelText: '主密码（本地解密，永不传输）',
+                      labelText: '账号',
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
-                        (v == null || v.length < 8) ? '主密码至少 8 位' : null,
+                        (v == null || v.isEmpty) ? '请输入账号' : null,
                   ),
                   const SizedBox(height: 8),
                   TextFormField(
-                    controller: _recoveryCode,
+                    controller: _password,
+                    obscureText: true,
                     decoration: const InputDecoration(
-                      labelText: '恢复码（Emergency Kit）',
+                      labelText: '账号密码',
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? '请输入恢复码' : null,
+                        (v == null || v.isEmpty) ? '请输入账号密码' : null,
                   ),
                   const SizedBox(height: 16),
                   if (_error != null)
@@ -103,25 +102,21 @@ class _UnlockPageState extends State<UnlockPage> {
                       ),
                     ),
                   FilledButton(
-                    onPressed: _busy ? null : _unlock,
+                    onPressed: _busy ? null : _login,
                     child: _busy
                         ? const SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('解锁'),
+                        : const Text('登录'),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '主密码与恢复码仅在本机使用，服务端无法读取你的数据；'
-                    '忘记主密码且丢失恢复码将无法恢复数据。',
+                    '登录仅验证账号身份；数据由主密码与恢复码在本地解密，'
+                    '服务端无法读取。',
                     style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.center,
-                  ),
-                  TextButton(
-                    onPressed: widget.state.logout,
-                    child: const Text('切换账号'),
                   ),
                 ],
               ),

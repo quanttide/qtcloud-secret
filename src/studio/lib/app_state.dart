@@ -25,28 +25,30 @@ class AppConfig {
   static const authBaseUrl = String.fromEnvironment('AUTH_BASE_URL');
 }
 
-/// 会话状态：锁定（未解锁）时不含任何密钥材料。
+/// 会话状态：登录（持有 JWT）与解锁（持有密钥材料）分离。
+/// 锁定只清除密钥材料，会话保留——重新解锁无需再登录。
 class AppState extends ChangeNotifier {
   AppState();
 
+  bool _loggedIn = false;
   bool _unlocked = false;
+  String? _token;
   String? _masterPassword;
   String? _recoveryCode;
   ProviderClient? _client;
   LocalCache? _cache;
   SyncEngine? _sync;
 
+  bool get loggedIn => _loggedIn;
   bool get unlocked => _unlocked;
   LocalCache get cache => _cache!;
   SyncEngine get sync => _sync!;
   ProviderClient get client => _client!;
 
-  /// 解锁：登录获取 JWT → 组装客户端 → 全量同步。
-  Future<void> unlock({
+  /// 登录：qtcloud-auth 账号密码认证，获取 JWT（会话态，不解密任何数据）。
+  Future<void> login({
     required String username,
     required String password,
-    required String masterPassword,
-    required String recoveryCode,
   }) async {
     final authBaseUrl = AppConfig.authBaseUrl;
     if (authBaseUrl.isEmpty) {
@@ -55,7 +57,20 @@ class AppState extends ChangeNotifier {
       );
     }
     final auth = AuthClient(baseUrl: authBaseUrl);
-    final token = await auth.login(username: username, password: password);
+    _token = await auth.login(username: username, password: password);
+    _loggedIn = true;
+    notifyListeners();
+  }
+
+  /// 解锁：主密码+恢复码派生密钥 → 组装客户端 → 全量同步解密。
+  Future<void> unlock({
+    required String masterPassword,
+    required String recoveryCode,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      throw StateError('未登录：请先在登录页完成账号认证');
+    }
     _masterPassword = masterPassword;
     _recoveryCode = recoveryCode;
     _client = ProviderClient(baseUrl: AppConfig.providerBaseUrl, token: token);
@@ -69,7 +84,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 锁定：内存密钥材料全部清除（明文索引随之清空）。
+  /// 锁定：内存密钥材料全部清除（明文索引随之清空），保留登录会话。
   void lock() {
     _unlocked = false;
     _masterPassword = null;
@@ -81,9 +96,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 退出登录：清除会话与密钥材料，回到登录页。
+  void logout() {
+    lock();
+    _token = null;
+    _loggedIn = false;
+    notifyListeners();
+  }
+
   /// 当前密钥材料（仅解锁后可用；供 UI 层传递，避免页面持有）。
   (String, String) get keyMaterial =>
       (_masterPassword!, _recoveryCode!);
+
+  /// 测试钩子：模拟已登录（不经网络认证）。
+  @visibleForTesting
+  void debugSetLoggedIn() {
+    _token = 'test-token';
+    _loggedIn = true;
+    notifyListeners();
+  }
 }
 
 /// 列表展示条目（明文元数据视图）。
