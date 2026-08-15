@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import 'backup_page.dart';
 import 'secret_edit_page.dart';
+import 'settings_page.dart';
 import 'unlock_page.dart';
 
 /// 条目列表页：资源清单展示 + 按需解锁。
@@ -181,6 +182,13 @@ class _SecretListPageState extends State<SecretListPage> {
       appBar: AppBar(
         title: const Text('我的密码'),
         actions: [
+          IconButton(
+            tooltip: '设置（密钥管理）',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => SettingsPage(state: widget.state)),
+            ),
+          ),
           IconButton(
             tooltip: '备份与恢复',
             icon: const Icon(Icons.backup_outlined),

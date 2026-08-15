@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:studio/app_state.dart';
 import 'package:studio/main.dart';
+import 'package:studio/ui/settings_page.dart';
 import 'package:studio/ui/unlock_page.dart';
 
 void main() {
@@ -44,5 +45,20 @@ void main() {
     expect(find.textContaining('服务地址'), findsNothing);
     expect(find.text('取消'), findsOneWidget);
     expect(find.text('切换账号'), findsOneWidget);
+  });
+
+  testWidgets('设置页：未解锁提示去解锁，恢复码生成器可用', (WidgetTester tester) async {
+    final state = AppState();
+    // ignore: invalid_use_of_visible_for_testing_member
+    state.debugSetLoggedIn();
+    await tester.pumpWidget(MaterialApp(home: SettingsPage(state: state)));
+    // 未解锁：提示去解锁，不显示修改密钥表单
+    expect(find.text('去解锁'), findsOneWidget);
+    expect(find.text('新主密码（≥8 位）'), findsNothing);
+    // 恢复码生成器
+    await tester.tap(find.text('生成恢复码'));
+    await tester.pump();
+    expect(find.text('重新生成'), findsOneWidget);
+    expect(find.text('复制恢复码'), findsOneWidget);
   });
 }

@@ -120,6 +120,14 @@ class AppState extends ChangeNotifier {
   (String, String) get keyMaterial =>
       (_masterPassword!, _recoveryCode!);
 
+  /// 更新会话密钥材料（设置页「修改密钥」重加密完成后调用——
+  /// 此后加密/解密均使用新密钥，锁定后解锁也需输入新密钥）。
+  void setKeyMaterial(String masterPassword, String recoveryCode) {
+    _masterPassword = masterPassword;
+    _recoveryCode = recoveryCode;
+    notifyListeners();
+  }
+
   /// 测试钩子：模拟已登录（不经网络认证；列表为空，不触发同步）。
   @visibleForTesting
   void debugSetLoggedIn() {
