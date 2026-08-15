@@ -36,6 +36,38 @@ resource "alicloud_cdn_domain_new" "studio" {
   # }
 }
 
+# ── 私有 Bucket 回源开关（l2_oss_key：private_oss_auth=on，自动 STS 同账号回源） ──
+# 说明：oss_auth 函数（FunctionID 10）由平台在配置 OSS 源站时自动添加（计费减免 +
+# 私有回源鉴权支持），勿手动配置；此处仅开启私有回源开关。
+# 注意：与 OSS 静态网站托管默认首页存在已知冲突，若回源 403 需按官方文档处理。
+resource "alicloud_cdn_domain_config" "studio_private_back" {
+  domain_name   = alicloud_cdn_domain_new.studio.domain_name
+  function_name = "l2_oss_key"
+  function_args {
+    arg_name  = "private_oss_auth"
+    arg_value = "on"
+  }
+}
+
+# 根路径改写为 /index.html：私有回源（签名请求）与 OSS 静态网站托管
+# 默认首页重写存在已知冲突（/ 回源 403），改为 CDN 侧直接回源 index.html
+resource "alicloud_cdn_domain_config" "studio_root_rewrite" {
+  domain_name   = alicloud_cdn_domain_new.studio.domain_name
+  function_name = "back_to_origin_url_rewrite"
+  function_args {
+    arg_name  = "source_url"
+    arg_value = "^/$"
+  }
+  function_args {
+    arg_name  = "target_url"
+    arg_value = "/index.html"
+  }
+  function_args {
+    arg_name  = "flag"
+    arg_value = "break"
+  }
+}
+
 # ── 账号级授权：CDN 回源私有 OSS（阿里云官方命名，幂等） ─────────────
 
 # 自定义策略：OSS 只读（List/Get）

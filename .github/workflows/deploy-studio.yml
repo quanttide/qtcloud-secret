@@ -16,14 +16,12 @@
 # 注意：Web 产物中地址对浏览器可见是平台固有限制（前端必须知道 API 地址），
 # 我们的安全边界是 UI 不展示、无编辑入口。
 #
-# 基础设施（manifests/terraform，已 IaC 化，非人工）：
+# 基础设施（manifests/terraform，已 IaC 化并全部落地）：
 #   - OSS 桶 qtcloud-secret-studio：静态网站托管 + 私有 ACL（studio-bucket.tf）
-#   - CDN 域名 secret.cloud.quanttide.com + 回源授权 RAM 角色 + DNS CNAME（cdn.tf）
-#
-# 剩余控制台人工步骤（无公开 OpenAPI，不可 IaC）：
-#   - CDN「回源配置 → 阿里云OSS私有Bucket回源」开启，回源类型选「同账号回源（STS）」。
-#     桶为私有 ACL，开关未开启前域名访问返回 403
-#   - HTTPS 证书：复用泛域名证书 *.quanttide.com（cdn.tf certificate_config 填证书 ID 后可选）
+#   - CDN 域名 + 私有回源（l2_oss_key/oss_auth）+ 根路径改写 + RAM 角色 + DNS（cdn.tf）
+#     已验证：http://secret.cloud.quanttide.com 200（Flutter Web 应用）
+#   - 可选：HTTPS 证书（复用泛域名证书 *.quanttide.com，
+#     cdn.tf certificate_config 填证书 ID 后由 terraform 管理）
 
 name: Deploy Studio
 
