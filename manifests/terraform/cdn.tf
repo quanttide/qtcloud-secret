@@ -29,14 +29,14 @@ resource "alicloud_cdn_domain_new" "studio" {
     priority = 20
   }
 
-  # 泛域名证书 *.quanttide.com（HTTPS）：证书 PEM（公钥+私钥）由持有者提供，
-  # 填入 certificate_config 的 server_certificate / private_key 后 apply。
-  # 注意：CDN SetCdnDomainSSLCertificate 必须携带证书内容，无法按 CertId/CertName
-  # 引用已有证书；泛域名证书文件由主账号持有（delib 上传时用过同一张）。
+  # HTTPS 证书：由 acme.sh 管理（Let's Encrypt 单域名证书
+  # secret.cloud.quanttide.com，90 天自动续期；续期后 reloadcmd 自动重配 CDN），
+  # terraform 不管理证书内容（避免私钥入库）——注意 *.quanttide.com 泛域名
+  # 证书不匹配两层子域 secret.cloud.quanttide.com，须用单域名证书。
   # certificate_config {
   #   cert_type              = "upload"
-  #   server_certificate     = "<PEM 公钥，多行>"
-  #   private_key            = "<PEM 私钥，多行>"
+  #   server_certificate     = "<PEM 公钥，acme.sh 签发>"
+  #   private_key            = "<PEM 私钥>"
   #   server_certificate_status = "on"
   # }
 }
@@ -70,6 +70,16 @@ resource "alicloud_cdn_domain_config" "studio_root_rewrite" {
   function_args {
     arg_name  = "flag"
     arg_value = "break"
+  }
+}
+
+# 强制 HTTPS：HTTP 请求 301 跳转 HTTPS（浏览器密码框安全警告消除）
+resource "alicloud_cdn_domain_config" "studio_https_force" {
+  domain_name   = alicloud_cdn_domain_new.studio.domain_name
+  function_name = "https_force"
+  function_args {
+    arg_name  = "enable"
+    arg_value = "on"
   }
 }
 
