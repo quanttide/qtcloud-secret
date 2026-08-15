@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../crypto/envelope.dart';
 import '../crypto/key_derivation.dart';
+import 'unlock_page.dart';
 
 /// 条目编辑页：新建/编辑密码条目。
 ///
 /// 设计（docs/index.md 4.1）：明文仅在内存——保存时随机 salt/nonce
 /// 加密为信封后经 provider API 上传，明文不落盘。
+/// 进入本页无需解锁（编辑不预填现有明文，名称来自明文元数据）；
+/// 保存时加密需要密钥——未解锁则弹出解锁页，成功后再保存。
 class SecretEditPage extends StatefulWidget {
   const SecretEditPage({super.key, required this.state, this.existing});
 
@@ -39,8 +42,29 @@ class _SecretEditPageState extends State<SecretEditPage> {
     super.dispose();
   }
 
+  /// 确保已解锁（保存加密需要密钥）：未解锁弹出解锁页，返回是否成功。
+  Future<bool> _ensureUnlocked() async {
+    if (widget.state.unlocked) {
+      return true;
+    }
+    if (!mounted) {
+      return false;
+    }
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => UnlockPage(state: widget.state)),
+    );
+    return ok ?? false;
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    // 加密需要派生密钥：未解锁先解锁，成功后继续保存
+    if (!await _ensureUnlocked()) {
+      return;
+    }
+    if (!mounted) {
       return;
     }
     setState(() {

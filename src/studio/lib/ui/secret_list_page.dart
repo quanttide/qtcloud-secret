@@ -145,13 +145,8 @@ class _SecretListPageState extends State<SecretListPage> {
   }
 
   Future<void> _openEdit([SecretListEntry? entry]) async {
-    // 新建/编辑需要密钥（加密写入），先解锁
-    if (!await _ensureUnlocked()) {
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
+    // 新建/编辑均可直接进入（编辑不预填明文，名称来自明文元数据）；
+    // 保存时加密需要密钥，由 SecretEditPage 在保存前按需解锁
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => SecretEditPage(state: widget.state, existing: entry),
