@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -12,15 +13,30 @@ import (
 
 // OSSStore 基于阿里云 OSS 的 Store 实现。
 //
-// 凭证来源：FC 运行时注入的 RAM 角色（STS 临时凭证，见 manifests/terraform/fc.tf），
-// SDK 自动从环境变量读取；本地开发可用静态 AK/SK 环境变量。
+// 凭证来源（见 NewOSSStore）：本地开发用 OSS_ACCESS_KEY_*，FC 3.0 运行时用
+// 函数角色注入的 ALIBABA_CLOUD_*（STS 临时凭证）。
 type OSSStore struct {
 	bucket *oss.Bucket
 }
 
 // NewOSSStore 创建 OSS 存储客户端。
+//
+// 凭证来源（按优先级）：
+//   - 本地开发：OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET
+//   - FC 3.0 运行时：ALIBABA_CLOUD_ACCESS_KEY_ID / ALIBABA_CLOUD_ACCESS_KEY_SECRET /
+//     ALIBABA_CLOUD_SECURITY_TOKEN（函数角色 STS 凭证，见 manifests/terraform/fc.tf）
 func NewOSSStore(bucketName, endpoint string) (*OSSStore, error) {
-	client, err := oss.New(endpoint, "", "")
+	ak := firstEnv("OSS_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_ID")
+	sk := firstEnv("OSS_ACCESS_KEY_SECRET", "ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+	token := os.Getenv("ALIBABA_CLOUD_SECURITY_TOKEN")
+
+	var client *oss.Client
+	var err error
+	if token != "" {
+		client, err = oss.New(endpoint, ak, sk, oss.SecurityToken(token))
+	} else {
+		client, err = oss.New(endpoint, ak, sk)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("创建 OSS 客户端失败: %w", err)
 	}
@@ -29,6 +45,16 @@ func NewOSSStore(bucketName, endpoint string) (*OSSStore, error) {
 		return nil, fmt.Errorf("获取 OSS 桶失败: %w", err)
 	}
 	return &OSSStore{bucket: bucket}, nil
+}
+
+// firstEnv 返回第一个非空环境变量的值。
+func firstEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // key 规整：确保 secrets/ 前缀与无前导斜杠。

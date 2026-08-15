@@ -8,6 +8,13 @@
 
 ---
 
+---
+
+## [0.1.0-alpha.3] - 2026-08-16
+
+### Fixed
+- OSS 访问 500：SDK 凭证读取适配 FC 3.0 运行时角色凭证（ALIBABA_CLOUD_* STS），本地开发仍支持 OSS_ACCESS_KEY_*
+
 ## [0.1.0-alpha.2] - 2026-08-16
 
 ### Fixed
