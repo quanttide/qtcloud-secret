@@ -1,0 +1,88 @@
+# =============================================================================
+# Studio CDN + DNS（secret.cloud.quanttide.com）
+#
+# 链路：OSS 静态网站桶（studio-bucket.tf，私有）→ CDN 加速 + 私有回源鉴权
+#   → CNAME 接入（云解析）→ 用户浏览器
+#
+# 说明：
+#   - 桶 ACL 私有（RAM 用户无权限设公共读），回源鉴权分两步：
+#     ① 账号级授权（本文件 RAM 角色/策略，对齐阿里云官方文档命名）
+#     ② 域名级开关：CDN 控制台「回源配置 → 阿里云OSS私有Bucket回源」开启，
+#        回源类型选「同账号回源（STS）」——该开关无公开 OpenAPI，
+#        且与 OSS 静态网站托管默认首页存在已知冲突，开启时按官方文档处理
+#        （https://www.alibabacloud.com/help/zh/cdn/user-guide/grant-alibaba-cloud-cdn-access-permissions-on-private-oss-buckets）
+#   - 证书：复用泛域名证书 *.quanttide.com（delib 已在使用）。
+#     证书 ID 需在控制台/证书服务查询后填入 certificate_config；
+#     未配置前域名仅 HTTP 可用
+#   - 前置：quanttide.com 已完成 ICP 备案（delib.cloud.quanttide.com 已上线）
+# =============================================================================
+
+resource "alicloud_cdn_domain_new" "studio" {
+  domain_name = "secret.cloud.quanttide.com"
+  cdn_type    = "web"
+
+  # 源站：OSS 静态网站桶（私有回源鉴权见上方说明）
+  sources {
+    content  = "qtcloud-secret-studio.oss-cn-hangzhou.aliyuncs.com"
+    type     = "oss"
+    port     = 80
+    priority = 20
+  }
+
+  # 泛域名证书 *.quanttide.com（HTTPS 可选，配置后生效）：
+  # certificate_config {
+  #   cert_id   = "<证书 ID，控制台查询>"
+  #   cert_type = "upload"
+  # }
+}
+
+# ── 账号级授权：CDN 回源私有 OSS（阿里云官方命名，幂等） ─────────────
+
+# 自定义策略：OSS 只读（List/Get）
+resource "alicloud_ram_policy" "cdn_private_oss" {
+  policy_name     = "AliyunCDNAccessingPrivateOSSRolePolicy"
+  description     = "用于CDN/DCDN回源私有OSS Bucket角色的授权策略，包含OSS的只读权限"
+  policy_document = <<-EOT
+    {
+      "Version": "1",
+      "Statement": [
+        { "Action": ["oss:List*", "oss:Get*"], "Resource": "*", "Effect": "Allow" }
+      ]
+    }
+  EOT
+}
+
+# 角色：信任 CDN 服务（cdn.aliyuncs.com 可 AssumeRole）
+resource "alicloud_ram_role" "cdn_private_oss" {
+  name        = "AliyunCDNAccessingPrivateOSSRole"
+  description = "用于CDN回源私有OSS Bucket"
+  document    = <<-EOT
+    {
+      "Statement": [
+        {
+          "Action": "sts:AssumeRole",
+          "Effect": "Allow",
+          "Principal": { "Service": ["cdn.aliyuncs.com"] }
+        }
+      ],
+      "Version": "1"
+    }
+  EOT
+}
+
+# 策略绑定到角色
+resource "alicloud_ram_role_policy_attachment" "cdn_private_oss" {
+  role_name   = alicloud_ram_role.cdn_private_oss.name
+  policy_name = alicloud_ram_policy.cdn_private_oss.policy_name
+  policy_type = "Custom"
+}
+
+# ── DNS：CNAME 接入 ─────────────────────────────────────────────────
+
+resource "alicloud_alidns_record" "studio" {
+  domain_name = "quanttide.com"
+  rr          = "secret.cloud"
+  type        = "CNAME"
+  value       = alicloud_cdn_domain_new.studio.cname
+  ttl         = 600
+}

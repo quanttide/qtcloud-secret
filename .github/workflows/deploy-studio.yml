@@ -16,10 +16,14 @@
 # 注意：Web 产物中地址对浏览器可见是平台固有限制（前端必须知道 API 地址），
 # 我们的安全边界是 UI 不展示、无编辑入口。
 #
-# 前置条件（首次需人工在阿里云控制台完成，参考 qtcloud-delib）：
-#   - OSS 桶 qtcloud-secret-studio：静态网站托管模式 + 公共读
-#   - CDN 域名 secret.cloud.quanttide.com：CNAME 指向 CDN 加速域名，绑定泛域名证书
-#   - DNS：secret.cloud.quanttide.com CNAME → CDN
+# 基础设施（manifests/terraform，已 IaC 化，非人工）：
+#   - OSS 桶 qtcloud-secret-studio：静态网站托管 + 私有 ACL（studio-bucket.tf）
+#   - CDN 域名 secret.cloud.quanttide.com + 回源授权 RAM 角色 + DNS CNAME（cdn.tf）
+#
+# 剩余控制台人工步骤（无公开 OpenAPI，不可 IaC）：
+#   - CDN「回源配置 → 阿里云OSS私有Bucket回源」开启，回源类型选「同账号回源（STS）」。
+#     桶为私有 ACL，开关未开启前域名访问返回 403
+#   - HTTPS 证书：复用泛域名证书 *.quanttide.com（cdn.tf certificate_config 填证书 ID 后可选）
 
 name: Deploy Studio
 
