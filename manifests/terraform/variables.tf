@@ -46,7 +46,15 @@ variable "fc_timeout" {
 }
 
 variable "jwt_secret" {
-  description = "JWT HS256 签名密钥（与 qtcloud-auth 共享的 org secret JWT_SECRET）。通过 TF_VAR_jwt_secret 注入，不入库"
+  description = "JWT HS256 签名密钥（历史方案：与 qtcloud-auth 共享的 org secret JWT_SECRET）。仅 jwt_public_key 未配置时生效（本地/旧环境回落）"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "jwt_public_key" {
+  description = "qtcloud-auth JWT RS256 验签公钥（base64(PEM) 单行，与 auth 的 JWT_PRIVATE_KEY 注入方式对齐）。由 CI 从 org secret JWT_PRIVATE_KEY 派生注入，不入库"
+  type        = string
+  sensitive   = true
+  default     = ""
 }

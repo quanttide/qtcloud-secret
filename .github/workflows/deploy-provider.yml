@@ -3,7 +3,8 @@
 #
 # 对齐 qtcloud-delib 的 deploy-provider.yml；差异（本应用当前阶段）：
 #   - 无 RDS（纯 OSS 方案）：无 Ensure RDS Running / DB_PASSWORD 步骤
-#   - 新增 JWT_PUBLIC_KEY：外部子系统 JWT 验签公钥（FC 环境变量）
+#   - JWT 验签：线上 qtcloud-auth 为 RS256 非对称签名；TF_VAR_jwt_public_key
+#     由 org secret JWT_PRIVATE_KEY 在 CI 内派生（base64(PEM) 公钥，单行）
 #
 # 镜像双通道原因：FC 中国区无法拉取 Docker Hub 镜像（registry not reachable），
 # 部署用镜像固定指向同地域 ACR；Docker Hub 保留为对外分发通道。
@@ -13,7 +14,8 @@
 # 所需 GitHub secrets（org 级）：
 #   - ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET：RAM 用户 AccessKey（terraform 用，PowerUserAccess）
 #   - ALIYUN_ACR_USERNAME / ALIYUN_ACR_PASSWORD / ALIYUN_ACR_REGISTRY：ACR 固定凭证（docker login；REGISTRY 为本实例公网地址 crpi-xxx.personal.cr.aliyuncs.com）
-#   - JWT_SECRET：JWT HS256 签名密钥（与 qtcloud-auth 共享，注入 TF_VAR_jwt_secret；对齐 qtcloud-auth 的注入方式）
+#   - JWT_PRIVATE_KEY：qtcloud-auth 的 JWT RS256 签名私钥（base64(PEM) 单行，org secret）——CI 派生公钥注入 provider 验签
+#   - JWT_SECRET：JWT HS256 共享密钥（历史方案，仅公钥缺失时回落；注入 TF_VAR_jwt_secret）
 #   - DOCKERHUB_USERNAME / DOCKERHUB_PASSWORD：Docker Hub 凭证（双通道之一）
 #
 # 前置条件：
@@ -110,6 +112,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # JWT 验签公钥：由 org secret JWT_PRIVATE_KEY（base64(PEM) 单行）派生，
+      # 不新增 secret、私钥不进日志（仅 base64 值在内存流转）
+      - name: Derive JWT Public Key
+        run: |
+          echo "${{ secrets.JWT_PRIVATE_KEY }}" | base64 -d | openssl rsa -pubout 2>/dev/null | base64 -w0 > /tmp/jwt_public.b64
+          echo "TF_VAR_jwt_public_key=$(cat /tmp/jwt_public.b64)" >> "$GITHUB_ENV"
 
       # 部署镜像固定指向 ACR（FC 中国区拉不到 Docker Hub）；仅写入 GITHUB_ENV，不进 job output
       - name: Resolve Image Name

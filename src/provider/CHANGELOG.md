@@ -10,10 +10,19 @@
 
 ## [Unreleased]
 
-### Changed
-- 文档更名：密码云 → 机密云（领域范围扩大至密码、证件、密钥与敏感信息等机密对象）
+（待发布内容将在此累积）
 
 ---
+
+## [0.1.0-alpha.4] - 2026-08-16
+
+### Fixed
+- 线上登录 401（客户端提示服务端异常）：qtcloud-auth 已升级 RS256 非对称签名（JWT_PRIVATE_KEY 签发，见 quanttide-auth「JWT 升级 RS256」），provider 仍按 HS256 共享密钥验签导致不匹配
+- JWT 验签对齐线上 auth：新增 `JWT_PUBLIC_KEY`（base64(PEM) RSA 公钥）RS256 验签；未配置时回落 HS256（JWT_SECRET，本地/旧环境）
+
+### Changed
+- CI 部署：`TF_VAR_jwt_public_key` 由 org secret `JWT_PRIVATE_KEY` 在流水线内派生（openssl rsa -pubout，base64 单行），不新增 secret、私钥不落日志
+- terraform：新增 `jwt_public_key` 变量（sensitive，默认空）注入 FC 环境变量
 
 ## [0.1.0-alpha.3] - 2026-08-16
 

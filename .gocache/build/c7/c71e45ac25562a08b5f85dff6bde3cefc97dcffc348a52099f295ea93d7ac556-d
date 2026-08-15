@@ -1,0 +1,5 @@
+=== RUN   TestVerifyOnlineToken
+RS256 验签通过: sub=e9bbbc28-fc1a-4dc0-b68d-a81a29d04d02
+--- PASS: TestVerifyOnlineToken (0.00s)
+PASS
+ok  	github.com/quanttide/quanttide-secret/provider	0.002s
