@@ -1,40 +1,168 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
-/// 备份页：导出加密备份 + Emergency Kit 引导。
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../app_state.dart';
+import '../crypto/envelope.dart';
+import '../crypto/key_derivation.dart';
+
+/// 备份页：导出加密备份 + 从备份恢复。
 ///
 /// 设计（docs/index.md 4.3）：
-/// - 备份：GET /export 拉取全部密文（NDJSON）保存为加密备份文件
-/// - 恢复：导入备份 → 主密码逐行解密合并
-/// - Emergency Kit：注册时强制引导（恢复码 + 使用说明）
-/// TODO: 接入 api/ProviderClient 与 crypto/EmergencyKit。
-class BackupPage extends StatelessWidget {
-  const BackupPage({super.key});
+/// - 备份：GET /export 拉取全部密文信封（NDJSON）→ 可复制保存
+/// - 恢复：粘贴 NDJSON → 逐行解密校验（验证密钥正确性）→ 上传合并
+/// - Emergency Kit 引导：恢复码是唯一恢复通道
+class BackupPage extends StatefulWidget {
+  const BackupPage({super.key, required this.state});
+
+  final AppState state;
+
+  @override
+  State<BackupPage> createState() => _BackupPageState();
+}
+
+class _BackupPageState extends State<BackupPage> {
+  bool _busy = false;
+  String? _message;
+  bool _messageIsError = false;
+  final _importController = TextEditingController();
+
+  @override
+  void dispose() {
+    _importController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _export() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final ndjson = await widget.state.client.export();
+      await Clipboard.setData(ClipboardData(text: ndjson));
+      if (mounted) {
+        setState(() {
+          _message = '已导出 ${ndjson.trim().isEmpty ? 0 : ndjson.trim().split('\n').length} 条密文并复制到剪贴板'
+              '（保存为 .ndjson 文件，用主密码即可恢复）';
+          _messageIsError = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _message = '导出失败：$e';
+        _messageIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _import() async {
+    final text = _importController.text.trim();
+    if (text.isEmpty) {
+      setState(() {
+        _message = '请先粘贴备份内容（NDJSON）';
+        _messageIsError = true;
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final (master, recovery) = widget.state.keyMaterial;
+      final cipher = EnvelopeCipher(deriveKey: const KeyDerivation().deriveKey);
+      var imported = 0;
+      for (final line in const LineSplitter().convert(text)) {
+        if (line.trim().isEmpty) {
+          continue;
+        }
+        final envelope =
+            Envelope.fromJson(jsonDecode(line) as Map<String, dynamic>);
+        // 解密校验：密钥错误/密文损坏会在此失败
+        await cipher.decrypt(
+          masterPassword: master,
+          recoveryCode: recovery,
+          payload: envelope.encrypted,
+        );
+        await widget.state.client.update(envelope); // 幂等覆盖
+        widget.state.cache.put(envelope);
+        imported++;
+      }
+      if (mounted) {
+        setState(() {
+          _message = '已恢复 $imported 条条目';
+          _messageIsError = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _message = '恢复失败：$e（请确认主密码/恢复码正确）';
+        _messageIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('备份与恢复')),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FilledButton.icon(
-              onPressed: () {
-                // TODO: 导出加密备份
-              },
-              icon: const Icon(Icons.download),
-              label: const Text('导出加密备份'),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          FilledButton.icon(
+            onPressed: _busy ? null : _export,
+            icon: const Icon(Icons.download),
+            label: const Text('导出加密备份'),
+          ),
+          const SizedBox(height: 24),
+          const Text('从备份恢复（粘贴 NDJSON 内容）：'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _importController,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              hintText: '粘贴 qtcloud-secret-backup.ndjson 的内容',
+              border: OutlineInputBorder(),
             ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () {
-                // TODO: 导入备份恢复
-              },
-              icon: const Icon(Icons.upload),
-              label: const Text('从备份恢复'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _import,
+            icon: const Icon(Icons.upload),
+            label: const Text('从备份恢复'),
+          ),
+          if (_message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Text(
+                _message!,
+                style: TextStyle(
+                  color: _messageIsError
+                      ? Theme.of(context).colorScheme.error
+                      : null,
+                ),
+              ),
             ),
-          ],
-        ),
+          const SizedBox(height: 32),
+          const Divider(),
+          const SizedBox(height: 8),
+          const Text(
+            '关于 Emergency Kit：恢复码是零知识下唯一恢复通道。'
+            '请将恢复码与主密码分开保管（打印纸质/加密文件）；'
+            '两者都丢失 = 数据永久丢失。任何索要恢复码的"客服"都是诈骗。',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
       ),
     );
   }

@@ -1,13 +1,47 @@
-// 会话管理：外部子系统（qtcloud-auth）登录与 JWT 存取。
+// 认证客户端：对接外部子系统（qtcloud-auth）获取 JWT。
 //
-// 设计（docs/index.md 6）：Authorization: Bearer <JWT>
-// - token 短时效，过期重新登录；不落盘明文（系统安全存储）
-//
-// TODO: 接入 qtcloud-auth OAuth 流程；token 安全存储（flutter_secure_storage）。
-library;
+// 端点（qtcloud-auth /oauth/token，OAuth2 password 模式）：
+//   POST /oauth/token  form: grant_type=password&username=&password=
+//   → {"access_token": "...", "token_type": "Bearer", ...}
+// 返回的 access_token 用于访问 provider API（Authorization: Bearer）。
+import 'dart:convert';
 
-class Session {
-  const Session({required this.accessToken});
+import 'package:http/http.dart' as http;
 
-  final String accessToken;
+class AuthException implements Exception {
+  const AuthException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class AuthClient {
+  AuthClient({required this.baseUrl, http.Client? client})
+      : _client = client ?? http.Client();
+
+  final String baseUrl;
+  final http.Client _client;
+
+  /// 账号密码登录，返回 JWT access token。
+  Future<String> login({
+    required String username,
+    required String password,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/oauth/token'),
+      body: {'grant_type': 'password', 'username': username, 'password': password},
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    );
+    if (resp.statusCode != 200) {
+      throw AuthException('登录失败（${resp.statusCode}）：${resp.body}');
+    }
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final token = data['access_token'] as String?;
+    if (token == null || token.isEmpty) {
+      throw const AuthException('登录响应缺少 access_token');
+    }
+    return token;
+  }
 }
