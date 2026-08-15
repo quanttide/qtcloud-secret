@@ -1,4 +1,4 @@
-// 量潮密码云客户端冒烟测试。
+// 量潮机密云客户端冒烟测试。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,7 +9,7 @@ import 'package:studio/ui/unlock_page.dart';
 void main() {
   testWidgets('启动进入登录页（未登录不出现主密码/恢复码）', (WidgetTester tester) async {
     await tester.pumpWidget(SecretApp(state: AppState()));
-    expect(find.text('量潮密码云'), findsOneWidget);
+    expect(find.text('量潮机密云'), findsOneWidget);
     expect(find.text('登录'), findsOneWidget);
     // 登录页只应有账号/账号密码，不应出现解锁凭据
     expect(find.text('主密码（本地解密，永不传输）'), findsNothing);

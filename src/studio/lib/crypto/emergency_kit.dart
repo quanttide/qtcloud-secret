@@ -28,7 +28,7 @@ class EmergencyKit {
 
   /// 可打印的 Kit 文本（用户离线保存）。
   String toText() => '''
-量潮密码云 - 紧急恢复套件（Emergency Kit）
+量潮机密云 - 紧急恢复套件（Emergency Kit）
 =========================================
 账户：$username
 恢复码：$recoveryCode

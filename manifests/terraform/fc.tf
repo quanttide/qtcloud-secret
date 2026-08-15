@@ -63,7 +63,7 @@ resource "alicloud_ram_role_policy_attachment" "fc_oss" {
 # （当前阶段无 RDS，不挂 VPC；internet_access 必须显式开启）
 resource "alicloud_fcv3_function" "this" {
   function_name     = local.app_name_prefix
-  description       = "qtcloud-secret 密码云 API"
+  description       = "qtcloud-secret 机密云 API"
   runtime           = "custom-container"
   handler           = "index.handler" # custom-container 必填占位，实际由容器监听端口决定
   cpu               = 0.5

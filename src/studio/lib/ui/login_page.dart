@@ -56,7 +56,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('量潮密码云')),
+      appBar: AppBar(title: const Text('量潮机密云')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
