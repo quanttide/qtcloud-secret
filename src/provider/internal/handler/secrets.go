@@ -29,16 +29,18 @@ const (
 
 // Handler 聚合依赖的 REST 处理器。
 type Handler struct {
-	verifier *auth.Verifier
-	store    storage.Store
+	verifier       *auth.Verifier
+	store          storage.Store
+	allowedOrigins []string // 浏览器跨源白名单（CORS）
 }
 
 // New 创建处理器。
-func New(verifier *auth.Verifier, store storage.Store) *Handler {
-	return &Handler{verifier: verifier, store: store}
+func New(verifier *auth.Verifier, store storage.Store, allowedOrigins []string) *Handler {
+	return &Handler{verifier: verifier, store: store, allowedOrigins: allowedOrigins}
 }
 
 // Routes 注册路由（Go 1.22+ 方法路由）；secrets 端点经 JWT 验签中间件，/health 免鉴权（探活用）。
+// CORS 中间件在最外层：OPTIONS 预检直接放行（不经过 JWT）。
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -53,7 +55,7 @@ func (h *Handler) Routes() http.Handler {
 	secured.HandleFunc("PUT /secrets/{id}", h.update)
 	secured.HandleFunc("DELETE /secrets/{id}", h.delete)
 	mux.Handle("/", h.verifier.Middleware(secured))
-	return mux
+	return corsMiddleware(h.allowedOrigins, mux)
 }
 
 // list GET /secrets：返回对象清单（id/updatedAt），客户端全量同步。

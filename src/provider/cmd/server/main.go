@@ -31,7 +31,7 @@ func main() {
 		log.Fatalf("初始化 OSS 存储失败: %v", err)
 	}
 
-	h := handler.New(verifier, store)
+	h := handler.New(verifier, store, cfg.CORSAllowedOrigin)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

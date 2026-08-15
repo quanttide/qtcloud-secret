@@ -14,6 +14,13 @@
 
 ---
 
+## [0.1.0-alpha.5] - 2026-08-16
+
+### Added
+- CORS 支持：浏览器端 Web 客户端（secret.cloud.quanttide.com）跨源访问 provider；OPTIONS 预检直接放行（不经过 JWT 鉴权），Allow-Origin 按白名单回显（`CORS_ALLOWED_ORIGINS` 环境变量，默认本产品 Web 站点）
+
+---
+
 ## [0.1.0-alpha.4] - 2026-08-16
 
 ### Fixed

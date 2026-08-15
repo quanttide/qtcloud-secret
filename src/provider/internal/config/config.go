@@ -2,26 +2,29 @@
 //
 // 环境变量约定（与 manifests/terraform/fc.tf 一致）：
 //
-//	OSS_BUCKET     密文数据桶名
-//	OSS_ENDPOINT   OSS endpoint（如 https://oss-cn-hangzhou.aliyuncs.com）
-//	JWT_PUBLIC_KEY qtcloud-auth 的 JWT RS256 验签公钥（base64(PEM) 单行，对齐 auth 的 JWT_PRIVATE_KEY 注入方式）
-//	JWT_SECRET     与 qtcloud-auth 共享的 JWT HS256 签名密钥（org secret；仅 JWT_PUBLIC_KEY 未配置时回落）
-//	PORT           监听端口（默认 8080，FC custom-container 约定）
+//	OSS_BUCKET          密文数据桶名
+//	OSS_ENDPOINT        OSS endpoint（如 https://oss-cn-hangzhou.aliyuncs.com）
+//	JWT_PUBLIC_KEY      qtcloud-auth 的 JWT RS256 验签公钥（base64(PEM) 单行，对齐 auth 的 JWT_PRIVATE_KEY 注入方式）
+//	JWT_SECRET          与 qtcloud-auth 共享的 JWT HS256 签名密钥（org secret；仅 JWT_PUBLIC_KEY 未配置时回落）
+//	CORS_ALLOWED_ORIGINS 浏览器跨源白名单（逗号分隔；默认本产品 Web 站点，见下）
+//	PORT                监听端口（默认 8080，FC custom-container 约定）
 package config
 
 import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config 服务端运行配置。
 type Config struct {
-	OSSBucket    string
-	OSSEndpoint  string
-	JWTPublicKey []byte // JWT RS256 验签公钥 PEM（qtcloud-auth 线上签名方案）
-	JWTSecret    []byte // JWT HS256 签名密钥（仅公钥未配置时回落）
-	Port         string
+	OSSBucket         string
+	OSSEndpoint       string
+	JWTPublicKey      []byte // JWT RS256 验签公钥 PEM（qtcloud-auth 线上签名方案）
+	JWTSecret         []byte // JWT HS256 签名密钥（仅公钥未配置时回落）
+	CORSAllowedOrigin []string
+	Port              string
 }
 
 // Load 从环境变量加载配置并校验必填项。
@@ -59,6 +62,17 @@ func Load() (*Config, error) {
 		secret = "quanttide-auth-secret"
 	}
 	cfg.JWTSecret = []byte(secret)
+
+	// 浏览器跨源白名单（Web 客户端站点）；未配置时默认本产品 Web 域名
+	origins := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if origins == "" {
+		origins = "https://secret.cloud.quanttide.com,http://secret.cloud.quanttide.com"
+	}
+	for _, o := range strings.Split(origins, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			cfg.CORSAllowedOrigin = append(cfg.CORSAllowedOrigin, o)
+		}
+	}
 
 	return cfg, nil
 }

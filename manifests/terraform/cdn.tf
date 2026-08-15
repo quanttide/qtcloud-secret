@@ -29,10 +29,15 @@ resource "alicloud_cdn_domain_new" "studio" {
     priority = 20
   }
 
-  # 泛域名证书 *.quanttide.com（HTTPS 可选，配置后生效）：
+  # 泛域名证书 *.quanttide.com（HTTPS）：证书 PEM（公钥+私钥）由持有者提供，
+  # 填入 certificate_config 的 server_certificate / private_key 后 apply。
+  # 注意：CDN SetCdnDomainSSLCertificate 必须携带证书内容，无法按 CertId/CertName
+  # 引用已有证书；泛域名证书文件由主账号持有（delib 上传时用过同一张）。
   # certificate_config {
-  #   cert_id   = "<证书 ID，控制台查询>"
-  #   cert_type = "upload"
+  #   cert_type              = "upload"
+  #   server_certificate     = "<PEM 公钥，多行>"
+  #   private_key            = "<PEM 私钥，多行>"
+  #   server_certificate_status = "on"
   # }
 }
 
