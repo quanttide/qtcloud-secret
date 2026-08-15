@@ -33,8 +33,14 @@ class LocalCache {
     _plaintextIndex.remove(id);
   }
 
-  /// 锁定：清除全部缓存与明文索引（内存清零）。
+  /// 锁定：清除明文索引（内存清零），保留密文信封缓存——
+  /// 列表元数据（name 等）无需解密即可展示，锁定后资源清单仍可见。
   void clear() {
+    _plaintextIndex.clear();
+  }
+
+  /// 退出登录/会话结束：连密文缓存一并清除。
+  void clearAll() {
     _envelopes.clear();
     _plaintextIndex.clear();
   }

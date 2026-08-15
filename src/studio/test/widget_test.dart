@@ -16,9 +16,22 @@ void main() {
     expect(find.text('恢复码（Emergency Kit）'), findsNothing);
   });
 
-  testWidgets('解锁页只包含主密码与恢复码，不含账号密码与地址', (WidgetTester tester) async {
+  testWidgets('登录后直接进入列表页（先见资源，无需先解锁）', (WidgetTester tester) async {
     final state = AppState();
     // 模拟已登录：直接注入会话态（不经网络）
+    // ignore: invalid_use_of_visible_for_testing_member
+    state.debugSetLoggedIn();
+    await tester.pumpWidget(SecretApp(state: state));
+    // 列表页立即可见，且不解锁也能看到资源清单提示
+    expect(find.text('我的密码'), findsOneWidget);
+    expect(find.text('暂无条目，点击右下角新建'), findsOneWidget);
+    // 解锁页不应自动出现（按需解锁）
+    expect(find.text('主密码（本地解密，永不传输）'), findsNothing);
+    expect(find.text('恢复码（Emergency Kit）'), findsNothing);
+  });
+
+  testWidgets('解锁页（按需弹出）只包含主密码与恢复码，不含账号密码与地址', (WidgetTester tester) async {
+    final state = AppState();
     // ignore: invalid_use_of_visible_for_testing_member
     state.debugSetLoggedIn();
     await tester.pumpWidget(MaterialApp(home: UnlockPage(state: state)));
@@ -29,6 +42,7 @@ void main() {
     expect(find.text('账号'), findsNothing);
     expect(find.text('账号密码'), findsNothing);
     expect(find.textContaining('服务地址'), findsNothing);
+    expect(find.text('取消'), findsOneWidget);
     expect(find.text('切换账号'), findsOneWidget);
   });
 }

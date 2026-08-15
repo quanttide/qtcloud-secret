@@ -1,7 +1,8 @@
-// 解锁页：主密码 + 恢复码（本地密钥派生，验证「你有没有密钥」）。
+// 解锁页（模态）：主密码 + 恢复码（本地密钥派生，验证「你有没有密钥」）。
 //
-// 与登录页分离（docs/index.md 4.2）：登录（账号密码）只获取会话，
-// 本页只负责零知识解锁——派生密钥并全量同步；
+// 与登录页分离（docs/index.md 4.2）：登录（账号密码）只获取会话并展示
+// 资源清单（明文元数据）；本页只在需要解密/加密的操作（查看条目、
+// 新建编辑、恢复导入）时由列表页按需弹出——成功后 pop(true) 返回。
 // 密钥材料只存在于 AppState 内存，锁定即清除。
 // 服务端地址为编译期配置，UI 不暴露任何地址入口。
 import 'package:flutter/material.dart';
@@ -44,7 +45,10 @@ class _UnlockPageState extends State<UnlockPage> {
         masterPassword: _masterPassword.text,
         recoveryCode: _recoveryCode.text.trim(),
       );
-      // 解锁成功后由 SecretApp（状态驱动）切换到条目列表页。
+      if (mounted) {
+        // 解锁成功：返回 true，由调用方（列表页）继续原操作
+        Navigator.of(context).pop(true);
+      }
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -118,6 +122,10 @@ class _UnlockPageState extends State<UnlockPage> {
                     '忘记主密码且丢失恢复码将无法恢复数据。',
                     style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.center,
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('取消'),
                   ),
                   TextButton(
                     onPressed: widget.state.logout,

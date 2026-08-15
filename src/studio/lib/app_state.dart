@@ -26,7 +26,12 @@ class AppConfig {
 }
 
 /// 会话状态：登录（持有 JWT）与解锁（持有密钥材料）分离。
-/// 锁定只清除密钥材料，会话保留——重新解锁无需再登录。
+///
+/// 流程（对齐「先见资源，需解密时才解锁」）：
+///   登录 → 组装客户端 + 同步清单元数据（name 等明文元数据，不解密）
+///   → 直接进入列表页；点击条目/新建/备份等需要密钥的操作时再解锁
+/// 锁定只清除密钥材料与明文索引（密文信封缓存保留，列表仍可见），
+/// 会话保留——重新解锁无需再登录。
 class AppState extends ChangeNotifier {
   AppState();
 
@@ -45,7 +50,9 @@ class AppState extends ChangeNotifier {
   SyncEngine get sync => _sync!;
   ProviderClient get client => _client!;
 
-  /// 登录：qtcloud-auth 账号密码认证，获取 JWT（会话态，不解密任何数据）。
+  /// 登录：qtcloud-auth 账号密码认证 → 组装客户端 → 同步清单元数据。
+  ///
+  /// 不派生密钥、不解密任何数据——资源清单（明文元数据）登录后立即可见。
   Future<void> login({
     required String username,
     required String password,
@@ -58,11 +65,15 @@ class AppState extends ChangeNotifier {
     }
     final auth = AuthClient(baseUrl: authBaseUrl);
     _token = await auth.login(username: username, password: password);
+    _client = ProviderClient(baseUrl: AppConfig.providerBaseUrl, token: _token!);
+    _cache = LocalCache();
+    _sync = SyncEngine(client: _client!, cache: _cache!);
+    await _sync!.syncMetas();
     _loggedIn = true;
     notifyListeners();
   }
 
-  /// 解锁：主密码+恢复码派生密钥 → 组装客户端 → 全量同步解密。
+  /// 解锁：主密码+恢复码派生密钥 → 全量同步解密。
   Future<void> unlock({
     required String masterPassword,
     required String recoveryCode,
@@ -73,9 +84,6 @@ class AppState extends ChangeNotifier {
     }
     _masterPassword = masterPassword;
     _recoveryCode = recoveryCode;
-    _client = ProviderClient(baseUrl: AppConfig.providerBaseUrl, token: token);
-    _cache = LocalCache();
-    _sync = SyncEngine(client: _client!, cache: _cache!);
     await _sync!.syncAll(
       masterPassword: masterPassword,
       recoveryCode: recoveryCode,
@@ -84,21 +92,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 锁定：内存密钥材料全部清除（明文索引随之清空），保留登录会话。
+  /// 锁定：清除密钥材料与明文索引，保留登录会话与密文信封缓存
+  /// （资源清单仍可见，点击条目时重新解锁）。
   void lock() {
     _unlocked = false;
     _masterPassword = null;
     _recoveryCode = null;
     _cache?.clear();
-    _cache = null;
-    _sync = null;
-    _client = null;
     notifyListeners();
   }
 
-  /// 退出登录：清除会话与密钥材料，回到登录页。
+  /// 退出登录：清除会话、密钥材料与全部缓存，回到登录页。
   void logout() {
-    lock();
+    _unlocked = false;
+    _masterPassword = null;
+    _recoveryCode = null;
+    _cache?.clearAll();
+    _cache = null;
+    _sync = null;
+    _client = null;
     _token = null;
     _loggedIn = false;
     notifyListeners();
@@ -108,10 +120,13 @@ class AppState extends ChangeNotifier {
   (String, String) get keyMaterial =>
       (_masterPassword!, _recoveryCode!);
 
-  /// 测试钩子：模拟已登录（不经网络认证）。
+  /// 测试钩子：模拟已登录（不经网络认证；列表为空，不触发同步）。
   @visibleForTesting
   void debugSetLoggedIn() {
     _token = 'test-token';
+    _client = ProviderClient(baseUrl: 'http://localhost', token: 'test-token');
+    _cache = LocalCache();
+    _sync = SyncEngine(client: _client!, cache: _cache!);
     _loggedIn = true;
     notifyListeners();
   }

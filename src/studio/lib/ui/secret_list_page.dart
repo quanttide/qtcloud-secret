@@ -4,11 +4,13 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import 'backup_page.dart';
 import 'secret_edit_page.dart';
+import 'unlock_page.dart';
 
-/// 条目列表页：本地明文索引展示 + 全量同步。
+/// 条目列表页：资源清单展示 + 按需解锁。
 ///
-/// 设计（docs/index.md 4.2）：列表基于内存明文索引（name 为明文元数据），
-/// 点击条目解密显示密码并可复制（剪贴板自动过期由系统/后续实现）。
+/// 设计（docs/index.md 4.2）：name 等元数据为明文，登录后立即可见；
+/// 点击条目查看明文 / 新建编辑 / 恢复导入等需要密钥的操作，
+/// 先经 [_ensureUnlocked] 弹出解锁页，解锁成功后继续原操作。
 class SecretListPage extends StatefulWidget {
   const SecretListPage({super.key, required this.state});
 
@@ -19,13 +21,32 @@ class SecretListPage extends StatefulWidget {
 }
 
 class _SecretListPageState extends State<SecretListPage> {
+  /// 确保已解锁：未解锁则弹出解锁页，返回是否解锁成功。
+  Future<bool> _ensureUnlocked() async {
+    if (widget.state.unlocked) {
+      return true;
+    }
+    if (!mounted) {
+      return false;
+    }
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => UnlockPage(state: widget.state)),
+    );
+    return ok ?? false;
+  }
+
   Future<void> _sync() async {
     try {
-      final (master, recovery) = widget.state.keyMaterial;
-      await widget.state.sync.syncAll(
-        masterPassword: master,
-        recoveryCode: recovery,
-      );
+      if (widget.state.unlocked) {
+        final (master, recovery) = widget.state.keyMaterial;
+        await widget.state.sync.syncAll(
+          masterPassword: master,
+          recoveryCode: recovery,
+        );
+      } else {
+        // 未解锁：仅同步清单元数据（不解密）
+        await widget.state.sync.syncMetas();
+      }
       if (mounted) {
         setState(() {});
       }
@@ -39,6 +60,9 @@ class _SecretListPageState extends State<SecretListPage> {
   }
 
   Future<void> _showSecret(SecretListEntry entry) async {
+    if (!await _ensureUnlocked()) {
+      return;
+    }
     final (master, recovery) = widget.state.keyMaterial;
     try {
       final plaintext = await widget.state.sync.decrypt(
@@ -121,6 +145,13 @@ class _SecretListPageState extends State<SecretListPage> {
   }
 
   Future<void> _openEdit([SecretListEntry? entry]) async {
+    // 新建/编辑需要密钥（加密写入），先解锁
+    if (!await _ensureUnlocked()) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => SecretEditPage(state: widget.state, existing: entry),
@@ -129,6 +160,19 @@ class _SecretListPageState extends State<SecretListPage> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  Future<void> _openBackup() async {
+    // 备份页含恢复导入（需要密钥解密），先解锁
+    if (!await _ensureUnlocked()) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => BackupPage(state: widget.state)),
+    );
   }
 
   @override
@@ -145,11 +189,7 @@ class _SecretListPageState extends State<SecretListPage> {
           IconButton(
             tooltip: '备份与恢复',
             icon: const Icon(Icons.backup_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => BackupPage(state: widget.state),
-              ),
-            ),
+            onPressed: _openBackup,
           ),
           IconButton(
             tooltip: '锁定',
@@ -160,35 +200,60 @@ class _SecretListPageState extends State<SecretListPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _sync,
-        child: entries.isEmpty
-            ? ListView(
-                children: [
-                  const SizedBox(height: 120),
-                  Icon(
-                    Icons.key_outlined,
-                    size: 64,
-                    color: Theme.of(context).colorScheme.outline,
+        child: Column(
+          children: [
+            if (!widget.state.unlocked)
+              MaterialBanner(
+                content: const Text(
+                  '列表为资源清单（明文元数据）。查看明文、新建或恢复需输入主密码解锁。',
+                ),
+                leading: const Icon(Icons.lock_outline),
+                actions: [
+                  TextButton(
+                    onPressed: () async {
+                      if (await _ensureUnlocked()) {
+                        if (mounted) {
+                          setState(() {});
+                        }
+                      }
+                    },
+                    child: const Text('解锁'),
                   ),
-                  const SizedBox(height: 12),
-                  const Center(child: Text('暂无条目，点击右下角新建')),
                 ],
-              )
-            : ListView.separated(
-                itemCount: entries.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final entry = entries[index];
-                  return ListTile(
-                    leading: const Icon(Icons.password),
-                    title: Text(entry.name),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => _delete(entry),
-                    ),
-                    onTap: () => _showSecret(entry),
-                  );
-                },
               ),
+            Expanded(
+              child: entries.isEmpty
+                  ? ListView(
+                      children: [
+                        const SizedBox(height: 120),
+                        Icon(
+                          Icons.key_outlined,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                        const SizedBox(height: 12),
+                        const Center(child: Text('暂无条目，点击右下角新建')),
+                      ],
+                    )
+                  : ListView.separated(
+                      itemCount: entries.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        return ListTile(
+                          leading: const Icon(Icons.password),
+                          title: Text(entry.name),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _delete(entry),
+                          ),
+                          onTap: () => _showSecret(entry),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openEdit(),

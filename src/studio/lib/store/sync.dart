@@ -17,27 +17,20 @@ class SyncEngine {
   final EnvelopeCipher _cipher =
       EnvelopeCipher(deriveKey: const KeyDerivation().deriveKey);
 
-  /// 执行一次全量同步，返回同步的条目数。
-  Future<int> syncAll({
-    required String masterPassword,
-    required String recoveryCode,
-  }) async {
+  /// 同步清单元数据：拉取清单 + 差异拉取密文信封（不解密，无需密钥）。
+  ///
+  /// 设计：name 等元数据是信封明文字段，登录后即可展示资源清单；
+  /// 仅密文负载需要密钥解密（见 syncAll）。登录后调用本方法，列表立即可见。
+  Future<int> syncMetas() async {
     final metas = await client.list();
     final remoteIds = <String>{};
 
     for (final meta in metas) {
       remoteIds.add(meta.id);
       final local = cache.byId(meta.id);
-      // 新增或远端更新（updatedAt 更新）时拉取
+      // 新增或远端更新（updatedAt 更新）时拉取信封（不解密）
       if (local == null || local.updatedAt.isBefore(meta.updatedAt)) {
-        final envelope = await client.get(meta.id);
-        cache.put(envelope);
-        await _decryptIntoIndex(envelope, masterPassword, recoveryCode);
-      } else {
-        // 本地已有且未过期：确保明文索引存在
-        if (cache.plaintextOf(meta.id) == null) {
-          await _decryptIntoIndex(local, masterPassword, recoveryCode);
-        }
+        cache.put(await client.get(meta.id));
       }
     }
 
@@ -51,6 +44,23 @@ class SyncEngine {
     }
 
     return metas.length;
+  }
+
+  /// 执行一次全量同步（元数据 + 解密建立明文索引），返回同步的条目数。
+  Future<int> syncAll({
+    required String masterPassword,
+    required String recoveryCode,
+  }) async {
+    final n = await syncMetas();
+
+    // 解密所有缓存信封 → 明文索引（缺则解）
+    for (final envelope in cache.all) {
+      if (cache.plaintextOf(envelope.id) == null) {
+        await _decryptIntoIndex(envelope, masterPassword, recoveryCode);
+      }
+    }
+
+    return n;
   }
 
   Future<void> _decryptIntoIndex(
