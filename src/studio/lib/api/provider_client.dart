@@ -115,8 +115,8 @@ class ProviderClient {
     return SecretItem.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  /// 创建条目。
-  Future<void> create(SecretItem item) async {
+  /// 创建条目（id 由服务端生成，返回完整条目）。
+  Future<SecretItem> create(SecretItem item) async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/secrets'),
       headers: _headers,
@@ -125,6 +125,14 @@ class ProviderClient {
     if (resp.statusCode != 201) {
       throw ProviderException('创建失败（${resp.statusCode}）：${resp.body}');
     }
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    return SecretItem(
+      id: data['id'] as String,
+      name: item.name,
+      secret: item.secret,
+      createdAt: item.createdAt,
+      updatedAt: DateTime.parse(data['updatedAt'] as String),
+    );
   }
 
   /// 更新条目（覆盖写）。

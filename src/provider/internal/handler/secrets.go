@@ -10,6 +10,7 @@
 package handler
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -120,12 +121,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "export", "", fmt.Sprintf("成功 导出=%d 跳过=%d", exported, skipped))
 }
 
-// create POST /secrets：校验 → 主密钥加密 → OSS。
+// create POST /secrets：校验 → 服务端生成 UUID → 主密钥加密 → OSS。
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	req, err := parseRequest(w, r)
 	if err != nil {
 		h.audit(r, "create", "", "校验失败: "+err.Error())
 		return
+	}
+	// id 由服务端生成（客户端不感知 UUID，避免客户端拼错格式）
+	if req.ID == "" {
+		req.ID = newUUID()
 	}
 	item, err := h.encryptItem(req, time.Now().UTC())
 	if err != nil {
@@ -213,6 +218,18 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── 加解密辅助 ─────────────────────────────────────────────
+
+// newUUID 生成 UUID v4（CSPRNG，version 4 + variant 10），作为对象 key。
+func newUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand 失败属于系统级故障，直接 panic 让实例重启（不留半成品）
+		panic("crypto/rand 读取失败: " + err.Error())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 // 明文条目（客户端交互 DTO：secret 为明文）。
 type secretDTO struct {

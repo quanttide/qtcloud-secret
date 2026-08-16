@@ -77,7 +77,7 @@ func ParseItem(body []byte) (*SecretItem, error) {
 	return &s, nil
 }
 
-// SecretRequest 客户端写入请求（secret 为明文，服务端负责加密）。
+// SecretRequest 客户端写入请求（id 仅更新时需带——创建时服务端生成，客户端不感知）。
 type SecretRequest struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -86,7 +86,8 @@ type SecretRequest struct {
 
 // Validate 校验写入请求。
 func (r *SecretRequest) Validate() error {
-	if !uuidV4Re.MatchString(r.ID) {
+	// id 可选：创建时为空（服务端生成 UUID v4），更新时须与路径一致（handler 校验）
+	if r.ID != "" && !uuidV4Re.MatchString(r.ID) {
 		return errors.New("id 必须是 UUID v4")
 	}
 	if r.Name == "" || len(r.Name) > MaxNameLength {

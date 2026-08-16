@@ -47,10 +47,9 @@ class _SecretEditPageState extends State<SecretEditPage> {
     });
     try {
       final now = DateTime.now().toUtc();
+      // 新建时 id 为空：由服务端生成（客户端不感知 UUID）
       final item = SecretItem(
-        id: widget.existing?.id ??
-            '${now.microsecondsSinceEpoch.toRadixString(16).padLeft(12, '0')}-'
-                '0000-4000-8000-${now.millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0')}',
+        id: widget.existing?.id ?? '',
         name: _name.text.trim(),
         secret: _secret.text,
         createdAt: widget.existing?.createdAt ?? now,
@@ -58,11 +57,12 @@ class _SecretEditPageState extends State<SecretEditPage> {
       );
 
       if (widget.existing == null) {
-        await widget.state.client.create(item);
+        final created = await widget.state.client.create(item);
+        widget.state.cache.put(created);
       } else {
         await widget.state.client.update(item);
+        widget.state.cache.put(item);
       }
-      widget.state.cache.put(item);
       if (mounted) {
         Navigator.of(context).pop();
       }
