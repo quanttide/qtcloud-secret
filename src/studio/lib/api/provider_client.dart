@@ -1,14 +1,12 @@
-// provider API 客户端：密文信封的 CRUD 与导出。
+// provider API 客户端：机密条目的明文 CRUD 与导出（服务端加密方案）。
 //
 // 端点约定（src/provider/docs/index.md）：
 //   GET/POST /secrets、GET/PUT/DELETE /secrets/{id}、GET /export、GET /health
 // 认证：Authorization: Bearer <JWT>（qtcloud-auth 签发，见 auth/session.dart）。
-// 零知识红线：本层只传输密文信封，永不接触明文。
+// 服务端可信：secret 为明文交互，落盘由服务端 MASTER_KEY 加密。
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-
-import '../crypto/envelope.dart';
 
 class ProviderException implements Exception {
   const ProviderException(this.message);
@@ -17,6 +15,58 @@ class ProviderException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 机密条目（明文交互 DTO，对齐 provider /secrets 响应）。
+class SecretItem {
+  const SecretItem({
+    required this.id,
+    required this.name,
+    required this.secret,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String name;
+  final String secret;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory SecretItem.fromJson(Map<String, dynamic> json) => SecretItem(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        secret: json['secret'] as String,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'secret': secret,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+}
+
+/// 清单条目（id/name/updatedAt，列表展示）。
+class SecretMeta {
+  const SecretMeta({
+    required this.id,
+    required this.name,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String name;
+  final DateTime updatedAt;
+
+  factory SecretMeta.fromJson(Map<String, dynamic> json) => SecretMeta(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
 }
 
 class ProviderClient {
@@ -38,7 +88,7 @@ class ProviderClient {
     return resp.statusCode == 200;
   }
 
-  /// 全量清单（id/updatedAt），同步用。
+  /// 全量清单（id/name/updatedAt），列表展示与同步用。
   Future<List<SecretMeta>> list() async {
     final resp = await _client.get(Uri.parse('$baseUrl/secrets'), headers: _headers);
     if (resp.statusCode != 200) {
@@ -50,8 +100,8 @@ class ProviderClient {
         .toList();
   }
 
-  /// 读取单个密文信封。
-  Future<Envelope> get(String id) async {
+  /// 读取单个条目（返回明文）。
+  Future<SecretItem> get(String id) async {
     final resp = await _client.get(
       Uri.parse('$baseUrl/secrets/$id'),
       headers: _headers,
@@ -62,15 +112,15 @@ class ProviderClient {
     if (resp.statusCode != 200) {
       throw ProviderException('读取失败（${resp.statusCode}）');
     }
-    return Envelope.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+    return SecretItem.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   /// 创建条目。
-  Future<void> create(Envelope envelope) async {
+  Future<void> create(SecretItem item) async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/secrets'),
       headers: _headers,
-      body: jsonEncode(envelope.toJson()),
+      body: jsonEncode(item.toJson()),
     );
     if (resp.statusCode != 201) {
       throw ProviderException('创建失败（${resp.statusCode}）：${resp.body}');
@@ -78,11 +128,11 @@ class ProviderClient {
   }
 
   /// 更新条目（覆盖写）。
-  Future<void> update(Envelope envelope) async {
+  Future<void> update(SecretItem item) async {
     final resp = await _client.put(
-      Uri.parse('$baseUrl/secrets/${envelope.id}'),
+      Uri.parse('$baseUrl/secrets/${item.id}'),
       headers: _headers,
-      body: jsonEncode(envelope.toJson()),
+      body: jsonEncode(item.toJson()),
     );
     if (resp.statusCode != 200) {
       throw ProviderException('更新失败（${resp.statusCode}）：${resp.body}');
@@ -100,7 +150,7 @@ class ProviderClient {
     }
   }
 
-  /// 导出全部密文信封（NDJSON 文本，离线备份用）。
+  /// 导出全部条目（NDJSON 明文，离线备份用）。
   Future<String> export() async {
     final resp = await _client.get(Uri.parse('$baseUrl/export'), headers: _headers);
     if (resp.statusCode != 200) {
@@ -108,17 +158,4 @@ class ProviderClient {
     }
     return resp.body;
   }
-}
-
-/// 清单条目（对齐 provider /secrets 响应）。
-class SecretMeta {
-  const SecretMeta({required this.id, required this.updatedAt});
-
-  final String id;
-  final DateTime updatedAt;
-
-  factory SecretMeta.fromJson(Map<String, dynamic> json) => SecretMeta(
-        id: json['id'] as String,
-        updatedAt: DateTime.parse(json['updatedAt'] as String),
-      );
 }

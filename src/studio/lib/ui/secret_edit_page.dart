@@ -1,21 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../api/provider_client.dart';
 import '../app_state.dart';
-import '../crypto/envelope.dart';
-import '../crypto/key_derivation.dart';
-import 'unlock_page.dart';
 
-/// 条目编辑页：新建/编辑密码条目。
+/// 条目编辑页：新建/编辑机密条目（服务端加密方案，登录即用）。
 ///
-/// 设计（docs/index.md 4.1）：明文仅在内存——保存时随机 salt/nonce
-/// 加密为信封后经 provider API 上传，明文不落盘。
-/// 进入本页无需解锁（编辑不预填现有明文，名称来自明文元数据）；
-/// 保存时加密需要密钥——未解锁则弹出解锁页，成功后再保存。
+/// 设计（docs/index.md 4.1）：name/secret 明文提交，服务端 MASTER_KEY 加密落盘。
 class SecretEditPage extends StatefulWidget {
   const SecretEditPage({super.key, required this.state, this.existing});
 
   final AppState state;
-  final SecretListEntry? existing;
+  final SecretItem? existing;
 
   @override
   State<SecretEditPage> createState() => _SecretEditPageState();
@@ -24,7 +19,7 @@ class SecretEditPage extends StatefulWidget {
 class _SecretEditPageState extends State<SecretEditPage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _name;
-  late final TextEditingController _password;
+  late final TextEditingController _secret;
   bool _busy = false;
   String? _error;
 
@@ -32,39 +27,18 @@ class _SecretEditPageState extends State<SecretEditPage> {
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.existing?.name ?? '');
-    _password = TextEditingController();
+    _secret = TextEditingController(text: widget.existing?.secret ?? '');
   }
 
   @override
   void dispose() {
     _name.dispose();
-    _password.dispose();
+    _secret.dispose();
     super.dispose();
-  }
-
-  /// 确保已解锁（保存加密需要密钥）：未解锁弹出解锁页，返回是否成功。
-  Future<bool> _ensureUnlocked() async {
-    if (widget.state.unlocked) {
-      return true;
-    }
-    if (!mounted) {
-      return false;
-    }
-    final ok = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => UnlockPage(state: widget.state)),
-    );
-    return ok ?? false;
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    // 加密需要派生密钥：未解锁先解锁，成功后继续保存
-    if (!await _ensureUnlocked()) {
-      return;
-    }
-    if (!mounted) {
       return;
     }
     setState(() {
@@ -72,33 +46,23 @@ class _SecretEditPageState extends State<SecretEditPage> {
       _error = null;
     });
     try {
-      final (master, recovery) = widget.state.keyMaterial;
-      final cipher = EnvelopeCipher(deriveKey: const KeyDerivation().deriveKey);
-      final payload = await cipher.encrypt(
-        masterPassword: master,
-        recoveryCode: recovery,
-        plaintext: _password.text,
-      );
-
       final now = DateTime.now().toUtc();
-      final envelope = Envelope(
+      final item = SecretItem(
         id: widget.existing?.id ??
             '${now.microsecondsSinceEpoch.toRadixString(16).padLeft(12, '0')}-'
                 '0000-4000-8000-${now.millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0')}',
         name: _name.text.trim(),
-        createdAt: widget.existing == null
-            ? now
-            : widget.state.cache.byId(widget.existing!.id)?.createdAt ?? now,
+        secret: _secret.text,
+        createdAt: widget.existing?.createdAt ?? now,
         updatedAt: now,
-        encrypted: payload,
       );
 
       if (widget.existing == null) {
-        await widget.state.client.create(envelope);
+        await widget.state.client.create(item);
       } else {
-        await widget.state.client.update(envelope);
+        await widget.state.client.update(item);
       }
-      widget.state.cache.put(envelope);
+      widget.state.cache.put(item);
       if (mounted) {
         Navigator.of(context).pop();
       }
@@ -135,7 +99,7 @@ class _SecretEditPageState extends State<SecretEditPage> {
               ),
               const SizedBox(height: 12),
               TextFormField(
-                controller: _password,
+                controller: _secret,
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: '密码',

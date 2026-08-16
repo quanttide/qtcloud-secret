@@ -11,12 +11,11 @@ void main() {
 /// 量潮机密云客户端入口。
 ///
 /// 设计思路见 docs/index.md：
-/// 客户端是零知识信任根——明文与密钥只存在于本端，
-/// 服务端（provider）只存储密文信封。
+/// 服务端加密方案——客户端经 qtcloud-auth 登录后直接读写
+/// （服务端以 MASTER_KEY 加密落盘），无客户端密钥。
 ///
 /// 页面由 AppState 状态驱动（不依赖导航栈）：
-///   未登录 → 登录页（账号密码）；已登录 → 列表页（资源清单立即可见，
-///   元数据为明文无需密钥；点击条目/新建/备份时按需解锁，见 UnlockPage）。
+///   未登录 → 登录页（账号密码）；已登录 → 列表页（登录即用）。
 class SecretApp extends StatelessWidget {
   const SecretApp({super.key, required this.state});
 

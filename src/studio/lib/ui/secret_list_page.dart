@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../api/provider_client.dart';
 import '../app_state.dart';
 import 'backup_page.dart';
 import 'secret_edit_page.dart';
-import 'settings_page.dart';
-import 'unlock_page.dart';
 
-/// 条目列表页：资源清单展示 + 按需解锁。
+/// 条目列表页：登录即用（服务端加密方案，无客户端密钥）。
 ///
-/// 设计（docs/index.md 4.2）：name 等元数据为明文，登录后立即可见；
-/// 点击条目查看明文 / 新建编辑 / 恢复导入等需要密钥的操作，
-/// 先经 [_ensureUnlocked] 弹出解锁页，解锁成功后继续原操作。
+/// 设计（docs/index.md 4.2）：登录后拉取全部条目（明文），
+/// 点击条目查看/复制、新建/编辑、备份恢复均直接可用。
 class SecretListPage extends StatefulWidget {
   const SecretListPage({super.key, required this.state});
 
@@ -22,32 +20,9 @@ class SecretListPage extends StatefulWidget {
 }
 
 class _SecretListPageState extends State<SecretListPage> {
-  /// 确保已解锁：未解锁则弹出解锁页，返回是否解锁成功。
-  Future<bool> _ensureUnlocked() async {
-    if (widget.state.unlocked) {
-      return true;
-    }
-    if (!mounted) {
-      return false;
-    }
-    final ok = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => UnlockPage(state: widget.state)),
-    );
-    return ok ?? false;
-  }
-
   Future<void> _sync() async {
     try {
-      if (widget.state.unlocked) {
-        final (master, recovery) = widget.state.keyMaterial;
-        await widget.state.sync.syncAll(
-          masterPassword: master,
-          recoveryCode: recovery,
-        );
-      } else {
-        // 未解锁：仅同步清单元数据（不解密）
-        await widget.state.sync.syncMetas();
-      }
+      await widget.state.refresh();
       if (mounted) {
         setState(() {});
       }
@@ -60,60 +35,40 @@ class _SecretListPageState extends State<SecretListPage> {
     }
   }
 
-  Future<void> _showSecret(SecretListEntry entry) async {
-    if (!await _ensureUnlocked()) {
-      return;
-    }
-    final (master, recovery) = widget.state.keyMaterial;
-    try {
-      final plaintext = await widget.state.sync.decrypt(
-        entry.id,
-        master,
-        recovery,
-      );
-      if (!mounted) {
-        return;
-      }
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(entry.name),
-          content: SelectableText(plaintext),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: plaintext));
-                if (!context.mounted) {
-                  return;
-                }
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已复制到剪贴板')),
-                );
-                Navigator.of(context).pop();
-              },
-              child: const Text('复制'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('解密失败：$e')),
-        );
-      }
-    }
+  Future<void> _showSecret(SecretItem item) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(item.name),
+        content: SelectableText(item.secret),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: item.secret));
+              if (!context.mounted) {
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已复制到剪贴板')),
+              );
+              Navigator.of(context).pop();
+            },
+            child: const Text('复制'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
-  Future<void> _delete(SecretListEntry entry) async {
+  Future<void> _delete(SecretItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('删除「${entry.name}」？'),
+        title: Text('删除「${item.name}」？'),
         content: const Text('删除后可从服务端版本控制恢复（如有）。'),
         actions: [
           TextButton(
@@ -131,8 +86,8 @@ class _SecretListPageState extends State<SecretListPage> {
       return;
     }
     try {
-      await widget.state.client.delete(entry.id);
-      widget.state.cache.remove(entry.id);
+      await widget.state.client.delete(item.id);
+      widget.state.cache.remove(item.id);
       if (mounted) {
         setState(() {});
       }
@@ -145,12 +100,10 @@ class _SecretListPageState extends State<SecretListPage> {
     }
   }
 
-  Future<void> _openEdit([SecretListEntry? entry]) async {
-    // 新建/编辑均可直接进入（编辑不预填明文，名称来自明文元数据）；
-    // 保存时加密需要密钥，由 SecretEditPage 在保存前按需解锁
+  Future<void> _openEdit([SecretItem? item]) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SecretEditPage(state: widget.state, existing: entry),
+        builder: (_) => SecretEditPage(state: widget.state, existing: item),
       ),
     );
     if (mounted) {
@@ -158,24 +111,9 @@ class _SecretListPageState extends State<SecretListPage> {
     }
   }
 
-  Future<void> _openBackup() async {
-    // 备份页含恢复导入（需要密钥解密），先解锁
-    if (!await _ensureUnlocked()) {
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => BackupPage(state: widget.state)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final entries = widget.state.cache.all
-        .map((e) => SecretListEntry(id: e.id, name: e.name))
-        .toList()
+    final entries = widget.state.cache.all.toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
     return Scaffold(
@@ -183,16 +121,11 @@ class _SecretListPageState extends State<SecretListPage> {
         title: const Text('我的密码'),
         actions: [
           IconButton(
-            tooltip: '设置（密钥管理）',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => SettingsPage(state: widget.state)),
-            ),
-          ),
-          IconButton(
             tooltip: '备份与恢复',
             icon: const Icon(Icons.backup_outlined),
-            onPressed: _openBackup,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => BackupPage(state: widget.state)),
+            ),
           ),
           IconButton(
             tooltip: '锁定',
@@ -203,60 +136,36 @@ class _SecretListPageState extends State<SecretListPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _sync,
-        child: Column(
-          children: [
-            if (!widget.state.unlocked)
-              MaterialBanner(
-                content: const Text(
-                  '列表为资源清单（明文元数据）。查看明文、新建或恢复需输入主密码解锁。',
-                ),
-                leading: const Icon(Icons.lock_outline),
-                actions: [
-                  TextButton(
-                    onPressed: () async {
-                      if (await _ensureUnlocked()) {
-                        if (mounted) {
-                          setState(() {});
-                        }
-                      }
-                    },
-                    child: const Text('解锁'),
+        child: entries.isEmpty
+            ? ListView(
+                children: [
+                  const SizedBox(height: 120),
+                  Icon(
+                    Icons.key_outlined,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.outline,
                   ),
+                  const SizedBox(height: 12),
+                  const Center(child: Text('暂无条目，点击右下角新建')),
                 ],
-              ),
-            Expanded(
-              child: entries.isEmpty
-                  ? ListView(
-                      children: [
-                        const SizedBox(height: 120),
-                        Icon(
-                          Icons.key_outlined,
-                          size: 64,
-                          color: Theme.of(context).colorScheme.outline,
-                        ),
-                        const SizedBox(height: 12),
-                        const Center(child: Text('暂无条目，点击右下角新建')),
-                      ],
-                    )
-                  : ListView.separated(
-                      itemCount: entries.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        return ListTile(
-                          leading: const Icon(Icons.password),
-                          title: Text(entry.name),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => _delete(entry),
-                          ),
-                          onTap: () => _showSecret(entry),
-                        );
-                      },
+              )
+            : ListView.separated(
+                itemCount: entries.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final item = entries[index];
+                  return ListTile(
+                    leading: const Icon(Icons.password),
+                    title: Text(item.name),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _delete(item),
                     ),
-            ),
-          ],
-        ),
+                    onTap: () => _showSecret(item),
+                    onLongPress: () => _openEdit(item),
+                  );
+                },
+              ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openEdit(),

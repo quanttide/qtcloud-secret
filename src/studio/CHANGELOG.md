@@ -14,6 +14,21 @@
 
 ---
 
+## [0.1.0-alpha.6] - 2026-08-16
+
+### Changed
+- **放弃零知识架构，改为服务端加密**（对齐 provider v0.1.0-alpha.6）：
+  - 移除客户端全部密钥链路：主密码/恢复码/解锁页/设置页密钥管理/Argon2id 派生（argon2_web、cryptography 依赖一并移除）
+  - 登录即用：登录（qtcloud-auth）后直接列表/查看/新建/编辑，数据由服务端 MASTER_KEY 加密落盘
+  - 编辑页直接预填现有明文（此前编辑不显示旧值）；长按条目可编辑
+  - 备份页导出明文 NDJSON、恢复逐条上传（无解密环节）
+  - 锁定仅清除内存缓存，会话保留
+
+### Removed
+- `crypto/`（key_derivation/envelope/emergency_kit）、`store/sync.dart`、`ui/unlock_page.dart`、`ui/settings_page.dart` 及相关测试
+
+---
+
 ## [0.1.0-alpha.5] - 2026-08-16
 
 ### Added

@@ -3,16 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../api/provider_client.dart';
 import '../app_state.dart';
-import '../crypto/envelope.dart';
-import '../crypto/key_derivation.dart';
 
-/// 备份页：导出加密备份 + 从备份恢复。
+/// 备份页：导出明文备份 + 从备份恢复（服务端加密方案）。
 ///
 /// 设计（docs/index.md 4.3）：
-/// - 备份：GET /export 拉取全部密文信封（NDJSON）→ 可复制保存
-/// - 恢复：粘贴 NDJSON → 逐行解密校验（验证密钥正确性）→ 上传合并
-/// - Emergency Kit 引导：恢复码是唯一恢复通道
+/// - 备份：GET /export 拉取全部条目（NDJSON 明文）→ 复制保存
+/// - 恢复：粘贴 NDJSON → 逐条上传合并（幂等覆盖）
 class BackupPage extends StatefulWidget {
   const BackupPage({super.key, required this.state});
 
@@ -44,8 +42,9 @@ class _BackupPageState extends State<BackupPage> {
       await Clipboard.setData(ClipboardData(text: ndjson));
       if (mounted) {
         setState(() {
-          _message = '已导出 ${ndjson.trim().isEmpty ? 0 : ndjson.trim().split('\n').length} 条密文并复制到剪贴板'
-              '（保存为 .ndjson 文件，用主密码即可恢复）';
+          _message =
+              '已导出 ${ndjson.trim().isEmpty ? 0 : ndjson.trim().split('\n').length} 条条目并复制到剪贴板'
+              '（保存为 .ndjson 文件即可离线备份）';
           _messageIsError = false;
         });
       }
@@ -75,23 +74,14 @@ class _BackupPageState extends State<BackupPage> {
       _message = null;
     });
     try {
-      final (master, recovery) = widget.state.keyMaterial;
-      final cipher = EnvelopeCipher(deriveKey: const KeyDerivation().deriveKey);
       var imported = 0;
       for (final line in const LineSplitter().convert(text)) {
         if (line.trim().isEmpty) {
           continue;
         }
-        final envelope =
-            Envelope.fromJson(jsonDecode(line) as Map<String, dynamic>);
-        // 解密校验：密钥错误/密文损坏会在此失败
-        await cipher.decrypt(
-          masterPassword: master,
-          recoveryCode: recovery,
-          payload: envelope.encrypted,
-        );
-        await widget.state.client.update(envelope); // 幂等覆盖
-        widget.state.cache.put(envelope);
+        final item = SecretItem.fromJson(jsonDecode(line) as Map<String, dynamic>);
+        await widget.state.client.update(item); // 幂等覆盖
+        widget.state.cache.put(item);
         imported++;
       }
       if (mounted) {
@@ -102,7 +92,7 @@ class _BackupPageState extends State<BackupPage> {
       }
     } catch (e) {
       setState(() {
-        _message = '恢复失败：$e（请确认主密码/恢复码正确）';
+        _message = '恢复失败：$e（请确认备份内容完整）';
         _messageIsError = true;
       });
     } finally {
@@ -122,7 +112,7 @@ class _BackupPageState extends State<BackupPage> {
           FilledButton.icon(
             onPressed: _busy ? null : _export,
             icon: const Icon(Icons.download),
-            label: const Text('导出加密备份'),
+            label: const Text('导出备份（明文 NDJSON）'),
           ),
           const SizedBox(height: 24),
           const Text('从备份恢复（粘贴 NDJSON 内容）：'),
@@ -157,9 +147,8 @@ class _BackupPageState extends State<BackupPage> {
           const Divider(),
           const SizedBox(height: 8),
           const Text(
-            '关于 Emergency Kit：恢复码是零知识下唯一恢复通道。'
-            '请将恢复码与主密码分开保管（打印纸质/加密文件）；'
-            '两者都丢失 = 数据永久丢失。任何索要恢复码的"客服"都是诈骗。',
+            '备份为明文 NDJSON：请妥善保管（加密文件/离线介质）。'
+            '数据由服务端主密钥加密落盘，备份文件是明文副本。',
             style: TextStyle(fontSize: 12),
           ),
         ],

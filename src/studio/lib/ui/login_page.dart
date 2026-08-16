@@ -1,7 +1,7 @@
-// 登录页：qtcloud-auth 账号密码认证（验证「你是谁」）。
+// 登录页：qtcloud-auth 账号密码认证（服务端加密方案，登录即用）。
 //
-// 与解锁页分离（docs/index.md 4.2）：登录只获取会话（JWT），
-// 不接触任何密钥材料；主密码/恢复码属于本地解锁，不在本页出现。
+// 登录只获取会话（JWT），之后列表/查看/新建直接可用——
+// 数据由服务端主密钥加密落盘，客户端无密钥负担。
 // 服务端地址为编译期配置，UI 不暴露任何地址入口。
 import 'package:flutter/material.dart';
 
@@ -113,8 +113,8 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '登录仅验证账号身份；数据由主密码与恢复码在本地解密，'
-                    '服务端无法读取。',
+                    '登录后即可查看与管理机密条目；'
+                    '数据由服务端主密钥加密存储。',
                     style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.center,
                   ),
