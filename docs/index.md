@@ -5,50 +5,43 @@
 
 ## 1. 定位与职责
 
-客户端是零知识架构的**信任根**：所有明文与密钥只存在于客户端。服务端（provider）只存储和转发密文信封，对内容一无所知。
+客户端是**服务端加密架构**的接入端：登录后直接读写明文（服务端以 MASTER_KEY 加密落盘），
+无任何客户端密钥负担（架构说明见 dev-guide/security.md）。
 
 | 职责 | 说明 |
 |------|------|
-| ✅ 加密/解密 | 主密码派生密钥，AES-256-GCM 加解密条目（明文只在内存） |
-| ✅ 密钥管理 | 主密码、盐、nonce 的生成与生命周期（见 dev-guide/security.md） |
 | ✅ 认证 | 引导用户经外部子系统（qtcloud-auth）登录，携带 JWT 访问 provider |
-| ✅ 本地缓存与索引 | 密文本地缓存 + 明文索引（列表/搜索），支持离线查看 |
-| ✅ 同步 | 全量拉取密文清单，差异合并（小数据量，无需增量协议） |
-| ✅ 备份 | Emergency Kit 引导、导出加密备份（`GET /export`） |
-| ❌ 明文落盘 | 解密结果不落盘，仅内存驻留 |
+| ✅ 列表/查看 | 拉取清单（id/name）与条目明文，登录即用 |
+| ✅ 新建/编辑 | 提交 `{name, secret}` 明文，服务端加密落盘 |
+| ✅ 本地缓存 | 明文条目内存缓存（列表/查看），锁定/退出清空，不落盘 |
+| ✅ 同步 | 全量拉取清单 + 差异拉取（小数据量，无需增量协议） |
+| ✅ 备份 | 导出明文 NDJSON（`GET /export`）离线保管 |
+| ❌ 客户端密钥 | 无——密钥是服务端运维资产（MASTER_KEY） |
 
 ## 2. 技术选型
 
 | 项 | 选型 | 说明 |
 |----|------|------|
 | 框架 | Flutter 3.x | 跨平台（Windows/macOS/iOS/Android/Web），与 qtcloud-delib studio 一致 |
-| 加密 | `cryptography` 包（AES-256-GCM） | 纯 Dart 实现，跨平台一致 |
-| 密钥派生 | Argon2id | `argon2` 包（dart 实现）；参数与 provider 信封的 `kdfSalt` 配合 |
-| HTTP | `http` / `dio` | 对接 provider API（`/secrets` CRUD、`/export`） |
-| 本地存储 | `sqflite` / `drift`（元数据索引）+ 文件（密文缓存） | 明文索引仅存内存派生视图，不落盘 |
+| HTTP | `http` | 对接 provider API（`/secrets` CRUD、`/export`） |
+| 本地存储 | 内存缓存（明文条目，登录后拉取） | 锁定/退出清空，不落盘；无客户端加密/派生依赖 |
 
 ## 3. 模块划分
 
 ```
 lib/
-├── main.dart                 # 入口：锁屏状态机（锁定/解锁）
-├── crypto/
-│   ├── key_derivation.dart   # Argon2id 派生 + 盐管理
-│   ├── envelope.dart         # 信封加解密（AES-256-GCM，对齐 model.md 结构）
-│   └── emergency_kit.dart    # Emergency Kit 生成/解析（恢复码）
+├── main.dart                 # 入口：登录/列表状态驱动
 ├── auth/
 │   └── session.dart          # 外部子系统登录（OAuth/token）+ JWT 存取
 ├── api/
-│   ├── provider_client.dart  # /secrets CRUD + /export（Bearer JWT）
-│   └── models.dart           # 信封 DTO（与服务端 schema 一致）
+│   └── provider_client.dart  # /secrets CRUD + /export（Bearer JWT，明文 DTO）
 ├── store/
-│   ├── local_cache.dart      # 密文本地缓存 + 元数据索引
-│   └── sync.dart             # 全量同步（列表差异合并）
+│   └── local_cache.dart      # 明文条目内存缓存（登录后拉取）
 └── ui/
-    ├── unlock_page.dart      # 主密码解锁（生物识别可选的润滑层）
-    ├── secret_list_page.dart # 条目列表（本地索引搜索）
+    ├── login_page.dart       # 登录（账号密码）
+    ├── secret_list_page.dart # 条目列表（查看/复制/删除/编辑）
     ├── secret_edit_page.dart # 新建/编辑条目
-    └── backup_page.dart      # 导出备份 + Emergency Kit 引导
+    └── backup_page.dart      # 导出/恢复备份（明文 NDJSON）
 ```
 
 ## 4. 核心数据流
@@ -56,52 +49,46 @@ lib/
 ### 4.1 创建/更新条目
 
 ```
-① 用户输入明文密码 → 内存
-② 随机生成 salt + nonce → Argon2id(主密码, salt) 派生密钥
-③ AES-256-GCM 加密 → 密文信封（id/name/时间戳/encrypted 负载）
-④ POST/PUT /secrets → provider 校验外层结构 → OSS
-⑤ 信封加入本地缓存 → UI 刷新（明文立即从内存清除）
+① 用户输入名称 + 密码 → 内存
+② POST /secrets（服务端生成 UUID）→ provider 校验 + MASTER_KEY 加密 → OSS
+③ 响应 id 入本地缓存 → UI 刷新
+编辑：PUT /secrets/{id}（保留 createdAt，重加密覆盖写）
 ```
 
-### 4.2 登录、列表与按需解锁
+### 4.2 登录与列表（登录即用）
 
-**先见资源，需要密钥时才解锁**（页面由 AppState 状态驱动）：
+页面由 AppState 状态驱动：
 
 ```
 登录页（LoginPage）：账号 + 账号密码 → qtcloud-auth 认证 → 会话（JWT）
-  → 同步清单元数据（GET /secrets 清单 + 拉取信封，不解密——name 等
-     元数据为明文字段）→ 直接进入列表页
-列表页（SecretListPage）：资源清单立即可见（无需密钥）
-  → 点击条目 / 新建编辑 / 备份恢复时按需弹出
-解锁页（UnlockPage，模态）：主密码 + 恢复码 → Argon2id 派生 → 解密 → 返回原操作
+  → 拉取清单（GET /secrets）→ 直接进入列表页
+列表页（SecretListPage）：条目立即可见，点击查看/复制明文、新建/编辑/删除、
+  备份恢复全部直接可用（无客户端密钥环节）
 ```
 
-- 登录只验证「你是谁」（外部子系统身份），不接触任何密钥材料
-- 列表只展示明文元数据（name/时间戳），密文负载不解密、明文不出现
-- 解锁只验证「你有没有密钥」（本地派生），不出现账号密码；成功 pop(true) 返回原操作，取消则留在列表
-- 锁定仅清除密钥材料与明文索引（密文信封缓存保留，列表仍可见），会话保留——重新解锁无需再登录；退出登录才回到登录页
+- 登录即会话：数据由服务端 MASTER_KEY 加密落盘，客户端无密钥负担
+- 锁定仅清除内存缓存（明文不落盘），会话保留；退出登录才回到登录页
 - 所有页面均不暴露任何服务端地址（编译期 dart-define 注入）
 
 ```
-① 列表页点击条目（未解锁）→ 解锁页：主密码+恢复码 → Argon2id 派生（每次解锁重新派生，锁定时内存清零）
-② 解锁成功 → 全量同步解密（差异拉取密文 → AES-GCM 解密 → 明文索引仅内存）
-③ 查看明文 → 明文仅内存展示；复制密码/超时 → 剪贴板自动清除（建议 30s）/ 自动锁屏
+① 点击条目 → 明文对话框（复制到剪贴板）→ 剪贴板自动清除（建议 30s）/ 自动锁屏
+② 下拉刷新 → 全量清单 + 差异拉取 → 内存缓存更新
 ```
 
 ### 4.3 备份与恢复
 
-- **备份**：`GET /export` 拉取全部密文信封（NDJSON）→ 保存为加密备份文件（用户自保管）
-- **恢复**：导入备份文件 → 输入主密码 → 逐行解密合并到本地
-- **Emergency Kit**：注册时强制引导生成（恢复码 + 使用说明），本地打印/导出
+- **备份**：`GET /export` 拉取全部条目明文（NDJSON）→ 复制保存为文件（加密压缩保管）
+- **恢复**：粘贴备份内容 → 逐条上传合并（按 id 幂等覆盖）
+- **主密钥丢失处置**：见 [user-guide/master-key.md](user-guide/master-key.md)
 
 ## 5. 安全设计
 
 | 机制 | 实现 |
 |------|------|
 | 明文生命周期 | 解密结果仅内存、用后即焚；剪贴板复制自动过期 |
-| 自动锁屏 | 无操作 N 分钟后锁定，解锁需重新输入主密码 |
-| 生物识别 | Face ID / 指纹作为解锁润滑层（底层仍需主密码，不替代） |
-| 本地缓存 | 密文缓存 + 元数据索引；明文索引不落盘 |
+| 自动锁屏 | 无操作 N 分钟后清除内存缓存，会话保留（登录即恢复） |
+| 生物识别 | 可选：登录润滑层（依赖 auth 侧能力） |
+| 本地缓存 | 明文条目内存缓存；锁定/退出清空，不落盘 |
 | 防截屏 | 敏感页面禁用截图（平台能力，可选） |
 | 会话 | JWT 短时效 + 过期重新登录；token 不落盘明文（系统安全存储） |
 
@@ -110,9 +97,9 @@ lib/
 | 端点 | 客户端用途 |
 |------|-----------|
 | `GET /secrets` | 全量同步清单（id/updatedAt） |
-| `POST /secrets` / `PUT /secrets/{id}` | 创建/更新（body = 密文信封） |
-| `GET /secrets/{id}` | 读取单个密文信封 |
-| `GET /export` | 导出全部密文（NDJSON，离线备份） |
+| `POST /secrets` / `PUT /secrets/{id}` | 创建（服务端生成 id）/更新（body = 明文条目） |
+| `GET /secrets/{id}` | 读取单个条目（明文） |
+| `GET /export` | 导出全部条目明文（NDJSON，离线备份） |
 | `DELETE /secrets/{id}` | 删除 |
 | `GET /health` | 服务可用性检查 |
 

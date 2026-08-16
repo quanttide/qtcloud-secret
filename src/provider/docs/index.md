@@ -1,7 +1,7 @@
 # 服务端设计方案（provider）
 
 > 本文档明确 qtcloud-secret 服务端（src/provider，Go 实现）的设计方案。
-> 架构总纲见仓库 `docs/dev-guide/`：storage.md（存储）、transfer.md（传输）、model.md（数据模型）、security.md（零知识与 Vault 边界）。
+> 架构总纲见仓库 `docs/dev-guide/`：storage.md（存储）、transfer.md（传输）、model.md（数据模型）、security.md（服务端加密与安全风险）。
 
 ## 1. 定位与职责边界
 
@@ -13,7 +13,7 @@
 | ✅ 校验 | 对象 key 必须为 UUID v4、信封大小 ≤ 64 KB、信封外层结构校验 |
 | ✅ 代理读写 | 密文信封的 Put / Get / Delete / List（客户端永不直接接触 OSS） |
 | ✅ 审计 | 每次读写记录操作者、时间、对象 id、结果 |
-| ❌ 加密/解密 | **绝不接触明文与客户端密钥**（零知识红线，见 security.md） |
+| ✅ 加密/解密 | 服务端以 MASTER_KEY（AES-256-GCM）加密 secret 字段落盘（见 security.md） |
 | ❌ 用户管理 | 用户在外部子系统，本服务不存用户 |
 
 **一句话：服务端经手所有密文，但对密文内容一无所知——密文对它只是无意义字节。**
@@ -37,7 +37,7 @@
 ```
 
 - 密钥经环境变量 `JWT_SECRET` 注入，与 qtcloud-auth **共享同一 org secret**（注入方式对齐 qtcloud-auth：workflow `TF_VAR_jwt_secret` ← `secrets.JWT_SECRET`）
-- HS256 为对称签名：验签方亦能签发——本服务与 qtcloud-auth 同属量潮体系、互相信任（服务端不接触用户明文，见 security.md 零知识边界）
+- HS256 为对称签名：验签方亦能签发——本服务与 qtcloud-auth 同属量潮体系、互相信任（见 security.md）
 - 每请求无状态验签，不建 session；短过期 + 时间窗口防重放
 - 授权规则：当前阶段验签通过即可读写（单团队）；JWT `scope` 字段预留团队版细粒度权限
 
@@ -112,7 +112,7 @@ oss://qtcloud-secret-data/          # 桶：版本控制 + SSE-OSS + 生命周�
 | 传输加密 | 全链路 TLS（FC 触发器 + 网关） |
 | 令牌验签 | JWT HS256，与 qtcloud-auth 共享 JWT_SECRET，无状态 |
 | OSS 访问 | STS 最小权限角色，客户端永不直连 |
-| 零知识 | 服务端无密钥可接触明文；泄露兜底见 security.md 第 6 章 |
+| 服务端加密 | secret 字段 MASTER_KEY 加密落盘，OSS 私有 + SSE-OSS 双保险；风险清单见 security.md §3 |
 | 审计 | 标准日志输出（团队版/合规要求时落独立审计存储） |
 | 错误信息 | 对外不泄露内部细节（对象不存在 vs 存储异常区分返回） |
 
