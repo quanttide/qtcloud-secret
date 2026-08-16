@@ -21,6 +21,7 @@ import (
 
 // Config 服务端运行配置。
 type Config struct {
+	Env               string
 	OSSBucket         string
 	OSSEndpoint       string
 	JWTPublicKey      []byte // JWT RS256 验签公钥 PEM（qtcloud-auth 线上签名方案）
@@ -58,8 +59,20 @@ func Load() (*Config, error) {
 		cfg.JWTPublicKey = pem
 	}
 
+	// 环境（prod/dev）：生产环境拒绝一切 fallback 默认值——
+	// 防止默认密钥（quanttide-auth-secret / 本地 MASTER_KEY）成为隐蔽后门（security.md R2）
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev"
+	}
+	cfg.Env = env
+
+	if cfg.Env == "prod" && len(cfg.JWTPublicKey) == 0 {
+		return nil, fmt.Errorf("生产环境必须配置 JWT_PUBLIC_KEY（拒绝回落默认 JWT_SECRET）")
+	}
+
 	// HS256 回落：仅当未配置公钥时使用（本地开发/旧环境；与 qtcloud-auth 历史
-	// getEnv fallback 保持一致）。生产务必配置 JWT_PUBLIC_KEY。
+	// getEnv fallback 保持一致）。生产已在上方拒绝该路径。
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
 		secret = "quanttide-auth-secret"
@@ -67,9 +80,12 @@ func Load() (*Config, error) {
 	cfg.JWTSecret = []byte(secret)
 
 	// 服务端主密钥（AES-256-GCM）：MASTER_KEY 为 base64 32 字节（运维注入）。
-	// 未配置时使用本地开发默认值（SHA-256 派生，仅本地调试，生产必须注入）。
+	// 未配置时使用本地开发默认值（SHA-256 派生，仅本地调试）；生产已拒绝。
 	mk := os.Getenv("MASTER_KEY")
 	if mk == "" {
+		if cfg.Env == "prod" {
+			return nil, fmt.Errorf("生产环境必须配置 MASTER_KEY（拒绝回落本地默认密钥）")
+		}
 		sum := sha256.Sum256([]byte("quanttide-local-dev-master-key"))
 		mk = base64.StdEncoding.EncodeToString(sum[:])
 	}

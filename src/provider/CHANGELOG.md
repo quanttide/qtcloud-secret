@@ -14,6 +14,15 @@
 
 ---
 
+## [0.1.0-alpha.8] - 2026-08-16
+
+### Changed
+- 生产环境拒绝 fallback 默认密钥（security.md R2）：新增 `ENV` 环境变量（terraform 注入），
+  `ENV=prod` 时 `JWT_PUBLIC_KEY` 与 `MASTER_KEY` 必须显式配置，否则拒绝启动——
+  消除「未配置密钥时回落硬编码默认值」的隐蔽后门
+
+---
+
 ## [0.1.0-alpha.7] - 2026-08-16
 
 ### Changed
