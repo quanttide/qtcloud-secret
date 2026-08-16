@@ -1,11 +1,12 @@
-// Package handler 实现 /secrets 的 REST 处理器。
+// Package handler 实现 /secrets 的 REST 处理器（服务端加密方案）。
 //
 // 链路（见 docs/dev-guide/transfer.md）：
 //
-//	客户端密文信封 → POST/PUT → 本服务验签 + 校验 → OSS
-//	客户端 ← GET（列表/单个） ← 本服务代理读取
+//	客户端 {name, secret 明文} → POST/PUT → 本服务主密钥加密 → OSS
+//	客户端 ← GET（列表/单个，secret 已解密） ← 本服务解密代理
 //
-// 本服务只代理密文与元数据，不接触明文（零知识红线）。
+// 服务端可信：客户端经 qtcloud-auth 登录（JWT）后直接读写明文，
+// secret 字段在服务端用 MASTER_KEY（AES-256-GCM）加密落盘（内部 crypto 包）。
 package handler
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/quanttide/quanttide-secret/provider/internal/auth"
+	"github.com/quanttide/quanttide-secret/provider/internal/crypto"
 	"github.com/quanttide/quanttide-secret/provider/internal/model"
 	"github.com/quanttide/quanttide-secret/provider/internal/storage"
 )
@@ -31,12 +33,13 @@ const (
 type Handler struct {
 	verifier       *auth.Verifier
 	store          storage.Store
-	allowedOrigins []string // 浏览器跨源白名单（CORS）
+	masterKey      []byte // 服务端主密钥（加密 secret 字段）
+	allowedOrigins []string
 }
 
 // New 创建处理器。
-func New(verifier *auth.Verifier, store storage.Store, allowedOrigins []string) *Handler {
-	return &Handler{verifier: verifier, store: store, allowedOrigins: allowedOrigins}
+func New(verifier *auth.Verifier, store storage.Store, masterKey []byte, allowedOrigins []string) *Handler {
+	return &Handler{verifier: verifier, store: store, masterKey: masterKey, allowedOrigins: allowedOrigins}
 }
 
 // Routes 注册路由（Go 1.22+ 方法路由）；secrets 端点经 JWT 验签中间件，/health 免鉴权（探活用）。
@@ -58,7 +61,7 @@ func (h *Handler) Routes() http.Handler {
 	return corsMiddleware(h.allowedOrigins, mux)
 }
 
-// list GET /secrets：返回对象清单（id/updatedAt），客户端全量同步。
+// list GET /secrets：返回清单（id/name/updatedAt），客户端列表展示。
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	metas, err := h.store.List(r.Context(), secretsPrefix)
 	if err != nil {
@@ -74,18 +77,20 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]item, 0, len(metas))
 	for _, m := range metas {
 		id := strings.TrimPrefix(m.Key, secretsPrefix)
-		out = append(out, item{ID: id, UpdatedAt: m.UpdatedAt})
+		name := id
+		// 读取条目取 name（小数据量，列表轻量全量读）
+		if data, err := h.store.Get(r.Context(), m.Key); err == nil {
+			if it, perr := model.ParseItem(data); perr == nil {
+				name = it.Name
+			}
+		}
+		out = append(out, item{ID: id, Name: name, UpdatedAt: m.UpdatedAt})
 	}
 	h.audit(r, "list", "", "成功")
 	writeJSON(w, http.StatusOK, out)
 }
 
-// export GET /export：导出全部密文信封（NDJSON 流式）。
-//
-// 设计（对齐 docs/user-guide/backup-recovery.md「数据本身的备份」）：
-//   - 零知识约束：服务端无密钥，只能导出密文信封集合（明文由客户端用主密码解密）
-//   - NDJSON 逐行输出：任一对象损坏不影响整体，客户端可逐行解析、部分恢复
-//   - 单对象读取失败：跳过并审计，不中断整体导出（版本控制兜底，失败概率极低）
+// export GET /export：导出全部条目明文（NDJSON 流式，离线备份用）。
 func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	metas, err := h.store.List(r.Context(), secretsPrefix)
 	if err != nil {
@@ -99,18 +104,15 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	exported, skipped := 0, 0
 	for _, m := range metas {
-		data, err := h.store.Get(r.Context(), m.Key)
+		item, err := h.decryptItem(r, m.Key)
 		if err != nil {
 			skipped++
 			h.audit(r, "export", m.Key, "跳过: "+err.Error())
 			continue
 		}
-		// 原样输出密文信封（不解析、不校验内容——零知识红线）
-		if _, err := w.Write(data); err != nil {
+		data, _ := json.Marshal(item)
+		if _, err := w.Write(append(data, '\n')); err != nil {
 			h.audit(r, "export", m.Key, "写入中断: "+err.Error())
-			return
-		}
-		if _, err := w.Write([]byte("\n")); err != nil {
 			return
 		}
 		exported++
@@ -118,27 +120,33 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "export", "", fmt.Sprintf("成功 导出=%d 跳过=%d", exported, skipped))
 }
 
-// create POST /secrets：校验信封 → PUT OSS。
+// create POST /secrets：校验 → 主密钥加密 → OSS。
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	env, body, err := parseBody(w, r)
+	req, err := parseRequest(w, r)
 	if err != nil {
 		h.audit(r, "create", "", "校验失败: "+err.Error())
 		return
 	}
-	if err := h.store.Put(r.Context(), secretsPrefix+env.ID, body); err != nil {
-		h.audit(r, "create", env.ID, "失败: "+err.Error())
+	item, err := h.encryptItem(req, time.Now().UTC())
+	if err != nil {
+		h.audit(r, "create", req.ID, "加密失败: "+err.Error())
+		http.Error(w, "加密失败", http.StatusInternalServerError)
+		return
+	}
+	body, _ := json.Marshal(item)
+	if err := h.store.Put(r.Context(), secretsPrefix+item.ID, body); err != nil {
+		h.audit(r, "create", item.ID, "失败: "+err.Error())
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	h.audit(r, "create", env.ID, "成功")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": env.ID, "updatedAt": env.UpdatedAt})
+	h.audit(r, "create", item.ID, "成功")
+	writeJSON(w, http.StatusCreated, map[string]any{"id": item.ID, "updatedAt": item.UpdatedAt})
 }
 
-// get GET /secrets/{id}：代理读取密文信封。
+// get GET /secrets/{id}：读取并解密返回明文条目。
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue(objectKey)
-	data, err := h.store.Get(r.Context(), secretsPrefix+id)
+	item, err := h.decryptItem(r, secretsPrefix+id)
 	if err != nil {
 		h.audit(r, "get", id, "失败: "+err.Error())
 		if err == storage.ErrNotFound {
@@ -149,30 +157,43 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "get", id, "成功")
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(data)
+	writeJSON(w, http.StatusOK, item)
 }
 
-// update PUT /secrets/{id}：校验（id 须与路径一致）→ 覆盖写。
+// update PUT /secrets/{id}：保留 createdAt，重加密覆盖写。
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue(objectKey)
-	env, body, err := parseBody(w, r)
+	req, err := parseRequest(w, r)
 	if err != nil {
 		h.audit(r, "update", id, "校验失败: "+err.Error())
 		return
 	}
-	if env.ID != id {
+	if req.ID != id {
 		h.audit(r, "update", id, "校验失败: id 与路径不一致")
 		http.Error(w, "id 与路径不一致", http.StatusBadRequest)
 		return
 	}
+	// 保留 createdAt（旧对象存在时）
+	createdAt := time.Now().UTC()
+	if old, err := h.store.Get(r.Context(), secretsPrefix+id); err == nil {
+		if it, perr := model.ParseItem(old); perr == nil {
+			createdAt = it.CreatedAt
+		}
+	}
+	item, err := h.encryptItem(req, createdAt)
+	if err != nil {
+		h.audit(r, "update", id, "加密失败: "+err.Error())
+		http.Error(w, "加密失败", http.StatusInternalServerError)
+		return
+	}
+	body, _ := json.Marshal(item)
 	if err := h.store.Put(r.Context(), secretsPrefix+id, body); err != nil {
 		h.audit(r, "update", id, "失败: "+err.Error())
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
 	h.audit(r, "update", id, "成功")
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "updatedAt": env.UpdatedAt})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updatedAt": item.UpdatedAt})
 }
 
 // delete DELETE /secrets/{id}：物理删除（OSS delete marker 兜底恢复）。
@@ -191,23 +212,76 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseBody 读取并校验请求体（大小上限 + 信封结构）。
-func parseBody(w http.ResponseWriter, r *http.Request) (*model.Envelope, []byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, model.MaxEnvelopeSize+1))
+// ── 加解密辅助 ─────────────────────────────────────────────
+
+// 明文条目（客户端交互 DTO：secret 为明文）。
+type secretDTO struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Secret    string    `json:"secret"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// encryptItem 明文请求 → 主密钥加密的存储对象。
+func (h *Handler) encryptItem(req *model.SecretRequest, createdAt time.Time) (*model.SecretItem, error) {
+	nonce, ciphertext, err := crypto.Encrypt(h.masterKey, []byte(req.Secret))
+	if err != nil {
+		return nil, err
+	}
+	return &model.SecretItem{
+		ID:        req.ID,
+		Name:      req.Name,
+		Secret:    model.Encrypted{Nonce: nonce, Ciphertext: ciphertext},
+		CreatedAt: createdAt,
+		UpdatedAt: time.Now().UTC(),
+	}, nil
+}
+
+// decryptItem 存储对象 → 解密返回明文 DTO。
+func (h *Handler) decryptItem(r *http.Request, key string) (*secretDTO, error) {
+	data, err := h.store.Get(r.Context(), key)
+	if err != nil {
+		return nil, err
+	}
+	it, err := model.ParseItem(data)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := crypto.Decrypt(h.masterKey, it.Secret.Nonce, it.Secret.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	return &secretDTO{
+		ID:        it.ID,
+		Name:      it.Name,
+		Secret:    string(plain),
+		CreatedAt: it.CreatedAt,
+		UpdatedAt: it.UpdatedAt,
+	}, nil
+}
+
+// parseRequest 读取并校验写入请求体（大小上限 + 结构）。
+func parseRequest(w http.ResponseWriter, r *http.Request) (*model.SecretRequest, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, model.MaxItemSize+1))
 	if err != nil {
 		http.Error(w, "读取请求体失败", http.StatusBadRequest)
-		return nil, nil, err
+		return nil, err
 	}
-	if len(body) > model.MaxEnvelopeSize {
+	if len(body) > model.MaxItemSize {
 		http.Error(w, "请求体过大", http.StatusRequestEntityTooLarge)
-		return nil, nil, errTooLarge
+		return nil, errTooLarge
 	}
-	env, err := model.ParseEnvelope(body)
-	if err != nil {
+	var req model.SecretRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "非法 JSON", http.StatusBadRequest)
+		return nil, err
+	}
+	if err := req.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return nil, nil, err
+		return nil, err
 	}
-	return env, body, nil
+	return &req, nil
 }
 
 var errTooLarge = &http.MaxBytesError{}

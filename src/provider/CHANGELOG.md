@@ -14,6 +14,20 @@
 
 ---
 
+## [0.1.0-alpha.6] - 2026-08-16
+
+### Changed
+- **放弃零知识架构，改为服务端加密**（单团队内部系统，服务端可信）：
+  - secret 字段由服务端主密钥（MASTER_KEY，AES-256-GCM）加密落盘，OSS 私有 + SSE-OSS 双保险
+  - 主密钥是运维资产（base64 32 字节环境变量），丢失可重置重加密，不再依赖用户保管
+- API 简化：POST/PUT 提交 `{id, name, secret 明文}`；GET 返回明文条目（登录即用）；清单含 name
+- 客户端不再需要主密码/恢复码（登录后直接读写）
+
+### Added
+- `MASTER_KEY` 环境变量 + terraform `master_key` 变量（CI 从 org secret MASTER_KEY 注入）
+
+---
+
 ## [0.1.0-alpha.5] - 2026-08-16
 
 ### Added

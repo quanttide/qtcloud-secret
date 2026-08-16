@@ -58,3 +58,10 @@ variable "jwt_public_key" {
   sensitive   = true
   default     = ""
 }
+
+variable "master_key" {
+  description = "服务端主密钥（base64 32 字节，AES-256-GCM 加密 secret 字段；运维资产，丢失可重置重加密）。通过 TF_VAR_master_key 注入（org secret MASTER_KEY），不入库"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

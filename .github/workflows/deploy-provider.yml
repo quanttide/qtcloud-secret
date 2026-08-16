@@ -108,6 +108,9 @@ jobs:
       ALICLOUD_ACCESS_KEY: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALICLOUD_SECRET_KEY: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+      # 服务端主密钥：org secret MASTER_KEY（base64 32 字节）。
+      # 注意：变更 MASTER_KEY 会使既有密文无法解密——需先在客户端重新加密全部条目
+      TF_VAR_master_key: ${{ secrets.MASTER_KEY }}
 
     steps:
       - name: Checkout
